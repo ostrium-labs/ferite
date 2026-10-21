@@ -16,7 +16,10 @@ ferrite-lithic-rtl = { workspace = true }
 
 [dev-dependencies]
 ferrite-lithic-bits = { workspace = true }
+ferrite-lithic-rtl = { workspace = true }
 ferrite-lithic-sim = { workspace = true }
+ferrite-lithic-tb = { workspace = true }
+proptest = "1" 
 
 [lints]
 workspace = true

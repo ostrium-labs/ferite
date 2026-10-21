@@ -69,6 +69,16 @@ recorded rather than quietly fixed.** The instruction memory is 2–4 KB, not
 box* rather than its area. ADR-0023 has the table, measured out of the IHP
 PDK's own LEF files, and what it does to the firmware target.
 
+**And the pin and timing engine — the part of the chip that is ours — is
+built, checked and measured.** The brief's four capabilities are *reading
+pins, writing pins, counting cycles, and hitting timing precisely*, and only
+the first of those cannot be done in software: a CPU cannot sample a line
+faster than it executes instructions. So the engine is a sampler with a
+debounce, with the rest of the brief as registers the firmware writes, on
+PicoRV32's memory bus so the core needs no fork. It is **2 338 gates and 352
+flip-flops** — 1.1 tiles of register budget — and it is checked against a
+reference model written separately, which caught three plausible bugs in it.
+
 **The designs are synthesised now, and the block ciphers do not fit on the
 die.** The plan's gate had two halves — *our DSL synthesises and places* — and
 the synthesis half is now a measurement rather than an assertion. The

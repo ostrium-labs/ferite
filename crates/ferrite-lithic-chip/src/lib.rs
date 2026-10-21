@@ -84,6 +84,7 @@
 #![warn(missing_docs)]
 
 mod chip;
+pub mod engine;
 mod pins;
 pub mod sram;
 mod wrapper;

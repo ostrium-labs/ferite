@@ -13,6 +13,7 @@ authors = ["Dinakaran V <112177746+dina-kar@users.noreply.github.com>"]
 [workspace.dependencies]
 ferrite-lithic = { path = "crates/ferrite-lithic", version = "0.0.1" }
 ferrite-lithic-bits = { path = "crates/ferrite-lithic-bits", version = "0.0.1" }
+proptest = "1"
 ferrite-lithic-ir = { path = "crates/ferrite-lithic-ir", version = "0.0.1" }
 ferrite-lithic-derive = { path = "crates/ferrite-lithic-derive", version = "0.0.1" }
 ferrite-lithic-rtl = { path = "crates/ferrite-lithic-rtl", version = "0.0.1" }

@@ -77,6 +77,19 @@ is already verified, and the core is not where novelty lives. Writing our own CP
 would spend schedule on the least differentiated part of the design. Licence to
 confirm before committing.
 
+**The pin and timing engine** — `ferrite-lithic-chip`'s `engine` module — is
+built, checked against a separately written reference model, and measured at
+**2 338 gates and 352 flip-flops** (1.10 tiles of register budget, about a
+tenth of the logic budget). It samples each pin at a programmable rate and
+requires a programmable number of disagreeing samples before it believes the
+line changed, which is what makes a UART RX line readable at all.
+
+**Its interface is PicoRV32's memory bus**, so the engine needs **no fork of
+the core**: the custom instructions become loads and stores to eight registers,
+and the only thing lost is the atomicity of a read-after-delay, which the
+engine provides by holding the sampled value in a register the CPU polls. That
+is a smaller claim than a fork and a bigger one than a UART block.
+
 **Custom instructions.** Each maps directly to a phrase in the brief:
 
 | Instruction | Purpose | Brief's words |
@@ -251,7 +264,7 @@ against.** `loams-meta-conformance` is 4,488 lines in the repo today.
 | Weeks | Deliverable | Gate |
 |---|---|---|
 | 1–2 | `ferrite-lithic` → CMOS5L → GDS, end to end | **De-risk first.** SRAM macro instantiation working; our DSL synthesises and places. *The instantiation story now exists* (`ferrite-lithic-pdk`, `ferrite-lithic-chip`, ADR-0020/0021/0022); what is left is to run the real flow |
-| 3–5 | CPU, pin/timing ISA, firmware loader | UART out of a pin |
+| 3–5 | CPU, pin/timing ISA, firmware loader | UART out of a pin. **The pin and timing engine is done**; what is left is the core, the ISA and the loader |
 | 6–8 | SPI, I2C from firmware | Baseline protocols complete |
 | 9–12 | CloudEvents batched-JSON path, event-store framing, `SIMD` + bit-exactness | First protocol translation running |
 | 13–15 | Conformance, formal, constrained-random, write-up | Submit |
@@ -265,6 +278,8 @@ DSL that cannot hit a real PDK is worthless however good the CPU is.
 | Risk | Mitigation |
 |---|---|
 | Our DSL cannot instantiate CMOS5L SRAM macros | **Done.** `ferrite-lithic-chip`'s `sram::macro_memory` binds the macro's seventeen ports by name, ties `A_DLY` high, ties the `A_BIST_*` pins off and muxes the two addresses. The remaining risk is the real flow, not the instantiation |
+| The design does not fit the die | **Measured, twice.** The pin and timing engine is 2 338 gates and 352 flip-flops. The block ciphers in the corpus are 7–11× over the *whole* die's cell budget, which confirms the plan's decision to put the novelty in the toolchain and the protocol stack rather than in an accelerator |
+| PicoRV32 needs a fork for the custom instructions | **Avoided.** The engine is memory-mapped on PicoRV32's bus, so the custom instructions become loads and stores. The atomicity of a read-after-delay is lost, and the engine's sampled-value register buys it back |
 | Area. 24 tiles is tight; 8x4 (+30%) is only "under consideration" | Design to 24. Keep `SIMD` width and CPU size parameterised so 8x4 is a one-line change. **The program memory is 2–4 KB, not 11–26 KB** (ADR-0023), and the biggest SRAM macro does not fit at all |
 | No published CMOS5L I/O spec | Email `asic-competition@janestreet.com`. The 26-pin / 66 MHz figures in circulation are **sky130** pads and do not transfer |
 | A PIO core is already solved on this node | The entry is the protocol translation, not the state machine |

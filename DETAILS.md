@@ -451,6 +451,87 @@ flip-flop in every library and the rules give the budget directly.
 The CI job `synth` installs yosys and fails if anything skipped, for the same
 reason the `cosim` job does.
 
+## 6d. The pin and timing engine: the part of the chip that is ours
+
+The competition's brief is *"a tiny CPU with an instruction set designed for
+reading pins, writing pins, counting cycles, and hitting timing precisely
+enough that you can implement a real protocol in firmware rather than in fixed
+logic."* Four capabilities, and three of them are the CPU's problem. The fourth
+— **reading a pin reliably** — cannot be done in software, because the CPU
+cannot sample a line faster than it can execute instructions and a line that
+changes in the middle of a read is a line that is read wrong.
+
+So the engine is a **sampler with a debounce**, and everything else in the
+brief is a register the firmware writes: a drive value and an output enable per
+pin, a free-running cycle counter, and a programmable sample period.
+
+`ferrite-lithic-chip`'s `engine` module builds it, and it is **2 338 gates and
+352 flip-flops** — 1.10 tiles of the die's register budget and about a tenth of
+its logic budget. The CPU and the protocol engine fit in what is left.
+
+**The interface is PicoRV32's memory bus**, so the engine needs no fork of
+the core: `mem_valid`, `mem_addr`, `mem_wdata`, `mem_wstrb`, `mem_ready`,
+`mem_rdata`, and a peripheral that always asserts `mem_ready` is a
+zero-wait-state peripheral. The custom instructions the plan describes become
+loads and stores to eight registers.
+
+**The debounce is the part worth having.** A UART RX line is sampled eight or
+sixteen times per bit and the majority wins; a pin that is *only* sampled at
+the bit rate cannot be read at all, because the sample lands at an arbitrary
+phase. So the engine samples at a programmable rate and requires a
+programmable number of *disagreeing* samples before it believes the line
+changed. A sample that agrees resets the count, so a line that glitches for one
+sample out of a hundred does not move the debounced level.
+
+**And the edge flag is sticky, cleared by writing a one to it**, rather than
+being a one-cycle pulse. A pulse can be missed by firmware that was busy when
+it happened, and a flag that is missed is a flag that does not exist.
+
+### Three bugs the reference model caught, and one it did not
+
+The engine is checked against a **reference model written separately**, in
+`engine::model`, and the two are compared over random stimuli by a
+proptest. The model is written from the specification and not from the
+design, because a design checked against a description of itself proves very
+little: a mistake in the understanding appears in both, and the two agree.
+
+Three bugs it caught, each of them plausible:
+
+- **The write enable was inverted.** The register's `clear` input *holds*
+  rather than clears, so the hold has to be the **negation** of the write
+  enable. Passed straight through, the register took the written value exactly
+  when the bus did *not* name it — so a write appeared to work and a
+  non-write appeared not to.
+- **The address decode aliased.** A four-bit word index made the address
+  `0x40` land on the first register, so an address the peripheral does not own
+  wrote to one it does. The decode is now a sixteen-bit window.
+- **The debounce read the wrong register.** The disagreement count compared
+  the pin against the *raw level* rather than the *debounced* level, and the
+  edge flag was computed from the stable level rather than from the previous
+  edge flag.
+
+And one it did **not** catch, which is the more interesting half: the pin
+vector was built with the pins in the wrong order, because `concat` puts the
+**first** part in the *most significant* bits. The hardware and the model
+agreed on every input and disagreed about which pin was which.
+
+### The inputs that should fail
+
+The Jane Street puzzle results said it about their own chip: *"models that
+reproduced our sample waveform perfectly still contained mistakes. Comparing
+separate implementations and constructing inputs that should fail exposed
+errors that replaying the examples hadn't caught."*
+
+So the differential test does not only replay the happy path. It drives a
+**period of zero** (one sample per cycle, not a divide by zero), a **threshold
+of zero** (one disagreeing sample), a **write of zero to the edge register**
+(which must *not* clear it — only a write of a one does), **writes to
+addresses the peripheral does not own**, a **byte strobe of zero** (which is
+not a write at all), and a **line that disagrees for exactly one sample**.
+
+The last one is the case a debounce exists for and the one a "replay the
+example" test would miss.
+
 ## 7. The Loams core, honestly
 
 The ambition was Loams' core on silicon. The source does not support it.

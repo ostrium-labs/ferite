@@ -307,6 +307,8 @@ dependencies = [
  "ferrite-lithic-pdk",
  "ferrite-lithic-rtl",
  "ferrite-lithic-sim",
+ "ferrite-lithic-tb",
+ "proptest",
 ]
 
 [[package]]
