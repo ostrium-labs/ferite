@@ -83,10 +83,30 @@ impl Sim {
     /// [`Error::Design`] if the design fails its own checks, or whatever
     /// [`Program::compile`] reports.
     pub fn new(design: &Design) -> Result<Self, Error> {
+        Self::new_with_clock(design, None)
+    }
+
+    /// Compile a design with the clock stated rather than inferred.
+    ///
+    /// The clock is a property of the module, not of the graph, and inferring
+    /// it from the first register gets a design whose *only* state is a memory
+    /// wrong: such a design has no register, so there is no clock to infer, so
+    /// the memory's writes — which happen at the edge — never happen, and the
+    /// design reads as though the memory were empty.
+    ///
+    /// `clock` is the clock signal, or `None` to infer one from the first
+    /// register.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Design`] if the design fails its own checks, or whatever
+    /// [`Program::compile_with_clock`] reports.
+    pub fn new_with_clock(design: &Design, clock: Option<&Signal>) -> Result<Self, Error> {
         let circuit = design.build()?;
         let inputs: Vec<NodeId> = design.input_ports().iter().map(Signal::id).collect();
         let outputs: Vec<NodeId> = design.output_ports().iter().map(Signal::id).collect();
-        let program = Program::compile(&circuit, &inputs, &outputs)?;
+        let program =
+            Program::compile_with_clock(&circuit, clock.map(Signal::id), &inputs, &outputs)?;
         Ok(Sim {
             design: design.clone(),
             machine: Machine::new(&program),

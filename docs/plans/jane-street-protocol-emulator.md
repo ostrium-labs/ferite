@@ -4,7 +4,15 @@ Target, hardware, and the firmware that will run on it. Written against the
 competition rules verbatim and against the actual Loams source, not against what
 the arithmetic *should* be.
 
-Status: draft, 2026-10-04. Deadline **18 January 2027**.
+Status: draft, 2026-10-04; revised 2026-10-21. Deadline **18 January 2027**.
+
+**Revised 2026-10-21.** The blackbox-instantiation story this plan called
+week-1 work now exists: named instance ports, a memory's read latency, a
+macro form on the memory, the IHP macro table with its areas measured out of the
+PDK, and the Tiny Tapeout wrapper with its pin budget. The plan's
+instruction-memory figure was wrong by three to six times and is corrected in
+ADR-0023, which moves the firmware target down the ladder from a CloudEvents
+stack to a framed link carrying a bounded number of events.
 
 ## 1. Target
 
@@ -16,8 +24,8 @@ emulator ASIC competition"* (10 Sep 2026), verified against the source:
 | Process | IHP **130nm CMOS5L** (`ihp-sg13cmos5l`) via Tiny Tapeout |
 | Flow | `ttihp-verilog-template`, branch **`cmos5l`**, RTL to GDS via LibreLane |
 | Tiles | `info.yaml` = **6x4** = 24 tiles, ~0.7 mm², ~1K logic cells/tile |
-| Register file | ~320 DFF/tile |
-| Instruction memory | **SRAM preferred over flip-flops**; ~3.7–8.8 Kbit/tile → **~11–26 KB** |
+| Register file | ~320 DFF/tile. 24 tiles is 7 680 flip-flops — 960 bytes — and that is the *whole* design's register budget, so a firmware image in flip-flops is impossible |
+| Instruction memory | **SRAM only.** The measured macro table gives **2–4 KB**, not the 11–26 KB this plan first assumed — see ADR-0023 |
 | Submission | **18 Jan 2027**. Shuttle target March 2027; chips after fabrication |
 | Open source | Required. Build in public explicitly allowed |
 | Contact | `asic-competition@janestreet.com` |
@@ -80,9 +88,19 @@ confirm before committing.
 | `WAIT_CYCLES` | delay | "hitting timing precisely" |
 | `SIMD` | 8x8 int8 MAC / dot product | see §5 |
 
-**Firmware image in SRAM**, per the post's own advice. This is the item most
-likely to block us: `ferrite-lithic` has no blackbox-instantiation story yet, so
-SRAM macro instantiation is week-1 work.
+**Firmware image in SRAM**, per the post's own advice. The blackbox story now
+exists — named instance ports, a memory's read latency, and a macro form on the
+memory (ADR-0020, ADR-0021) — and the IHP macro's interface is in
+`ferrite-lithic-pdk` with its areas measured out of the PDK's LEF files.
+
+**But the budget is 2–4 KB, not 11–26 KB.** ADR-0023 works it out from the
+macro table: the biggest macro's bounding box is forty tiles, the 1024x32 is
+nine, and the CPU and the protocol engine take the rest. A single CloudEvent in
+JSON is two to four hundred bytes, so 4 KB is a handful of events. The JSON
+batch path was chosen because it fit 11–26 KB; it does not fit, and the firmware
+target has to move down the ladder to a framed link carrying a bounded number of
+events. What the entry demonstrates is the toolchain and the verification, not a
+CloudEvents stack.
 
 ## 4. What runs on it
 
@@ -232,7 +250,7 @@ against.** `loams-meta-conformance` is 4,488 lines in the repo today.
 
 | Weeks | Deliverable | Gate |
 |---|---|---|
-| 1–2 | `ferrite-lithic` → CMOS5L → GDS, end to end | **De-risk first.** SRAM macro instantiation working; our DSL synthesises and places |
+| 1–2 | `ferrite-lithic` → CMOS5L → GDS, end to end | **De-risk first.** SRAM macro instantiation working; our DSL synthesises and places. *The instantiation story now exists* (`ferrite-lithic-pdk`, `ferrite-lithic-chip`, ADR-0020/0021/0022); what is left is to run the real flow |
 | 3–5 | CPU, pin/timing ISA, firmware loader | UART out of a pin |
 | 6–8 | SPI, I2C from firmware | Baseline protocols complete |
 | 9–12 | CloudEvents batched-JSON path, event-store framing, `SIMD` + bit-exactness | First protocol translation running |
@@ -246,8 +264,8 @@ DSL that cannot hit a real PDK is worthless however good the CPU is.
 
 | Risk | Mitigation |
 |---|---|
-| Our DSL cannot instantiate CMOS5L SRAM macros | Week-1 spike. Hard blocker, found early |
-| Area. 24 tiles is tight; 8x4 (+30%) is only "under consideration" | Design to 24. Keep `SIMD` width and CPU size parameterised so 8x4 is a one-line change |
+| Our DSL cannot instantiate CMOS5L SRAM macros | **Done.** `ferrite-lithic-chip`'s `sram::macro_memory` binds the macro's seventeen ports by name, ties `A_DLY` high, ties the `A_BIST_*` pins off and muxes the two addresses. The remaining risk is the real flow, not the instantiation |
+| Area. 24 tiles is tight; 8x4 (+30%) is only "under consideration" | Design to 24. Keep `SIMD` width and CPU size parameterised so 8x4 is a one-line change. **The program memory is 2–4 KB, not 11–26 KB** (ADR-0023), and the biggest SRAM macro does not fit at all |
 | No published CMOS5L I/O spec | Email `asic-competition@janestreet.com`. The 26-pin / 66 MHz figures in circulation are **sky130** pads and do not transfer |
 | A PIO core is already solved on this node | The entry is the protocol translation, not the state machine |
 | Protocol scope overruns | JSON batch path only. Protobuf and HTTP/2 are stretch, and Iggy/Fluss framing is a later rung |

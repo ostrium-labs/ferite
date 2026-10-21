@@ -4,6 +4,7 @@ use core::fmt;
 
 use ferrite_lithic_bits::Error as BitsError;
 use ferrite_lithic_ir::Error as IrError;
+use ferrite_lithic_ir::NodeId;
 
 /// A compile or simulation failure.
 ///
@@ -48,6 +49,11 @@ pub enum Error {
         name: String,
         /// The output ports that do exist, in declaration order.
         known: Vec<String>,
+    },
+    /// The stated clock is not one bit wide.
+    NotOneBit {
+        /// The clock signal.
+        signal: NodeId,
     },
     /// A value was written to a port of the wrong width.
     PortWidth {
@@ -179,10 +185,18 @@ impl fmt::Display for Error {
                  simulates a single clock domain, and simulating two as one would make \
                  results depend on the order registers are visited in"
             ),
+            Error::NotOneBit { signal } => write!(
+                f,
+                "the stated clock {signal} is not one bit wide. A clock is one bit, \
+                 and a wider one would be a data bus rather than an edge."
+            ),
             Error::NoClock => write!(
                 f,
                 "this design has no register, so it has no clock to drive at a clock edge; \
-                 a register-free design can still be settled with `comb`"
+                 a register-free design can still be settled with `comb`. A memory \
+                 with a read latency needs a clock too — its capture is a register — \
+                 so a design whose only state is a synchronous memory still needs one \
+                 register somewhere for the simulator to take the clock from."
             ),
             Error::BufferTooLarge { what, width } => write!(
                 f,

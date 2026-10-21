@@ -8,6 +8,7 @@
 #![allow(clippy::unwrap_used)]
 
 use ferrite_lithic_bits::Bits;
+use ferrite_lithic_ir::InstancePort;
 use ferrite_lithic_ir::{CaseArm, Circuit, Error, Node, NodeId, Op};
 
 fn bits(value: u64, width: u32) -> Bits {
@@ -424,21 +425,12 @@ fn a_write_ports_enable_must_be_one_bit() {
 }
 
 #[test]
-fn an_instance_refuses_a_zero_output_width() {
-    let mut c = fresh();
-    assert!(matches!(
-        c.instance("sub", Vec::new(), Vec::new(), 0).unwrap_err(),
-        Error::ZeroWidth { .. }
-    ));
-}
-
-#[test]
 fn an_instance_refuses_an_empty_name() {
     // Reported as its own error rather than as `ZeroWidth`: the name becomes the
     // instance identifier in the generated Verilog, so an empty one is a
     // different mistake with a different fix, and `ZeroWidth` names neither.
     let mut c = fresh();
-    let err = c.instance("", Vec::new(), Vec::new(), 8).unwrap_err();
+    let err = c.instance("", Vec::new(), Vec::new()).unwrap_err();
     assert!(matches!(err, Error::EmptyInstanceName { .. }));
     assert!(
         err.to_string().contains("non-empty name"),
@@ -447,13 +439,54 @@ fn an_instance_refuses_an_empty_name() {
 }
 
 #[test]
-fn an_instances_output_width_is_the_declared_one() {
+fn an_instance_refuses_a_port_name_that_is_used_twice() {
     let mut c = fresh();
     let input = c.constant(bits(0, 4));
-    let sub = c
-        .instance("sub", vec![("W".to_string(), bits(3, 2))], vec![input], 9)
-        .unwrap();
-    assert_eq!(c.width_of(sub), 9);
+    let err = c
+        .instance(
+            "sub",
+            Vec::new(),
+            vec![
+                InstancePort::input("a", input, 4),
+                InstancePort::input("a", input, 4),
+            ],
+        )
+        .unwrap_err();
+    assert!(matches!(err, Error::DuplicatePortName { .. }));
+    assert!(
+        err.to_string().contains("two ports named `a`"),
+        "message should name the problem: {err}"
+    );
+}
+
+#[test]
+fn an_instance_refuses_a_port_whose_width_does_not_match_its_signal() {
+    let mut c = fresh();
+    let input = c.constant(bits(0, 4));
+    let err = c
+        .instance("sub", Vec::new(), vec![InstancePort::input("a", input, 9)])
+        .unwrap_err();
+    assert!(matches!(err, Error::PortWidthMismatch { .. }));
+    assert!(
+        err.to_string().contains("is declared 9 bits wide"),
+        "message should name both widths: {err}"
+    );
+}
+
+#[test]
+fn an_instance_refuses_to_drive_a_wire_that_already_has_a_driver() {
+    let mut c = fresh();
+    let input = c.constant(bits(0, 4));
+    let wire = c.wire(4).unwrap();
+    c.drive(wire, input).unwrap();
+    let err = c
+        .instance("sub", Vec::new(), vec![InstancePort::output("q", wire, 4)])
+        .unwrap_err();
+    assert!(matches!(err, Error::PortAlreadyDriven { .. }));
+    assert!(
+        err.to_string().contains("already has a driver"),
+        "message should name the problem: {err}"
+    );
 }
 
 // --------------------------------------------------------------------- check

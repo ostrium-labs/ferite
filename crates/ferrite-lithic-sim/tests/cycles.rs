@@ -298,15 +298,18 @@ fn two_clocks_are_refused_rather_than_simulated_as_one() {
 fn an_unmodelled_instance_is_refused() {
     let d = Design::new();
     let a = d.input("a", 8).unwrap();
-    let out = d
-        .instance(
+    let q = d.wire(8).unwrap();
+    let sub = d
+        .blackbox(
             "fifo",
             &[("DEPTH", Bits::constant(4, 32).unwrap())],
-            &[a],
-            8,
+            &[
+                ferrite_lithic::BlackboxPort::input("a", &a),
+                ferrite_lithic::BlackboxPort::output("q", &q),
+            ],
         )
         .unwrap();
-    d.output("q", 8, &out).unwrap();
+    d.output("q", 8, sub.output("q").unwrap()).unwrap();
 
     let err = Sim::new(&d).unwrap_err();
     assert!(

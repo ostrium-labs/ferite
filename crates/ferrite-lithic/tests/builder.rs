@@ -403,21 +403,38 @@ fn using_a_non_memory_where_a_memory_is_wanted_is_refused_by_the_dsl_too() {
 }
 
 #[test]
-fn an_instance_needs_a_name_and_a_single_output() {
+fn a_blackbox_names_its_ports_and_drives_its_outputs() {
     let d = Design::new();
     let input = d.lit(3, 8).unwrap();
+    let out = d.wire(9).unwrap();
     let sub = d
-        .instance(
+        .blackbox(
             "sub",
             &[("W", ferrite_lithic_bits::Bits::constant(3, 2).unwrap())],
-            &[input],
-            9,
+            &[
+                ferrite_lithic::BlackboxPort::input("a", &input),
+                ferrite_lithic::BlackboxPort::output("q", &out),
+            ],
         )
         .unwrap();
-    assert_eq!(sub.kind(), "Instance");
-    assert_eq!(sub.width(), 9);
+    assert_eq!(sub.signal().kind(), "Instance");
+    // An instance is a statement, not a value: it has no width of its own, and
+    // its outputs are the nets it drives.
+    assert_eq!(sub.signal().width(), 0);
+    assert_eq!(sub.output("q").unwrap().width(), 9);
+    assert_eq!(sub.outputs().len(), 1);
 
-    let err = d.instance("", &[], &[], 8).unwrap_err();
+    let err = sub.output("nope").unwrap_err();
+    assert!(
+        matches!(err, ferrite_lithic::Error::UnknownInstanceOutput { .. }),
+        "expected UnknownInstanceOutput, got {err:?}"
+    );
+}
+
+#[test]
+fn a_blackbox_needs_a_name() {
+    let d = Design::new();
+    let err = d.blackbox("", &[], &[]).unwrap_err();
     assert!(
         matches!(
             err.as_ir(),

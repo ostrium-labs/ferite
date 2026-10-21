@@ -126,4 +126,6 @@ pub use circuit::Circuit;
 pub use deps::Deps;
 pub use error::{Error, Op, Relation};
 pub use id::NodeId;
-pub use node::{CaseArm, Node, WritePort, address_width_for_depth};
+pub use node::{
+    CaseArm, InstancePort, MemMacro, Node, PortDirection, WritePort, address_width_for_depth,
+};

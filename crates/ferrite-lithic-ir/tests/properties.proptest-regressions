@@ -1,0 +1,13 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 40047a554f3344594e7c9ebd13d17c47333d92a955dd52eb5e7f366c4932eecc # shrinks to program = Program { shape: [(0, 0, 0), (12, 0, 1)], loops: [], seed: 0 }
+cc cdbb756c57b7efe0c7186ed72823bf10670109630c9b4b5ad103e58045ab8b50 # shrinks to program = Program { shape: [(12, 8, 1)], loops: [], seed: 0 }
+cc 37df608ce07353a871342199ee674aca5ddf52e727a8610c8a9c7516f388e2ea # shrinks to program = Program { shape: [(0, 0, 0), (12, 1, 2)], loops: [], seed: 0 }
+cc ab35584f39be152567e19f3e698de888ab9a31cb6514ef9f0029a1665ae4096e # shrinks to program = Program { shape: [(5, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (12, 0, 1)], loops: [], seed: 0 }
+cc ed913a5e5c5118ef98ced4a444c3bd62d80c54beb48536d09904a8e6106f6343 # shrinks to program = Program { shape: [(0, 24, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 4, 0), (12, 0, 1)], loops: [], seed: 0 }
+cc d52e5f3f3fc71c3e8b622467f8700e4b51186898bc4be5a9446568395288124a # shrinks to program = Program { shape: [(0, 0, 0), (5, 0, 0), (0, 0, 0), (0, 0, 0), (12, 16, 8)], loops: [], seed: 0 }
+cc 3263d97402fbd044e3eecd2d00f4c536faaf32869f63e057227f89a45cb26d6d # shrinks to program = Program { shape: [(0, 0, 0), (5, 0, 0), (7, 24, 0), (12, 0, 1), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0)], loops: [], seed: 0 }

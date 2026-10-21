@@ -1,5 +1,7 @@
 //! What to emit: a named circuit with a port list and a clock.
 
+use std::collections::BTreeMap;
+
 use ferrite_lithic_ir::{Circuit, NodeId};
 
 use crate::error::Error;
@@ -21,33 +23,6 @@ impl core::fmt::Display for Direction {
             Self::Output => "output",
         })
     }
-}
-
-/// How a module's ports are named in its port list.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum PortNames {
-    /// The port's identifier is the name on its wire.
-    ///
-    /// This is the default, and it is what you want for a leaf module: the names in
-    /// the port list are the names in the design.
-    #[default]
-    Wire,
-    /// Inputs are `i0`, `i1`, … and outputs are `o0`, `o1`, …, in port order.
-    ///
-    /// # Why this exists
-    ///
-    /// [`Node::Instance`](ferrite_lithic_ir::Node::Instance) records a
-    /// submodule's *name*, its parameters and its inputs' *order* — but not the
-    /// names of its ports, because the graph has nowhere to put them. An
-    /// instantiation site therefore cannot name the ports it connects to, and a
-    /// submodule emitted with [`PortNames::Wire`] cannot be bound by one.
-    ///
-    /// A positional scheme closes that loop with no guesswork: an instantiation
-    /// site connects `.i0(..)`, `.i1(..)`, `.o0(..)` in order, and a submodule
-    /// declared with these names is bindable. Positional names are *reserved*
-    /// before any user name is allocated, so a signal called `i0` is renamed
-    /// rather than allowed to shadow a port and break the binding.
-    Positional,
 }
 
 /// A named circuit, its ports, and its clock.
@@ -78,7 +53,6 @@ pub struct Module {
     clock: Option<NodeId>,
     inputs: Vec<NodeId>,
     outputs: Vec<NodeId>,
-    ports: PortNames,
 }
 
 /// The port counts that make two same-named modules the same definition.
@@ -96,8 +70,6 @@ pub struct Signature {
     pub input_widths: Vec<u32>,
     /// The output widths, in order.
     pub output_widths: Vec<u32>,
-    /// How ports are named.
-    pub ports: PortNames,
 }
 
 impl Module {
@@ -126,7 +98,6 @@ impl Module {
             clock: Some(clock),
             inputs,
             outputs,
-            ports: PortNames::Wire,
         }
     }
 
@@ -150,15 +121,7 @@ impl Module {
             clock: None,
             inputs,
             outputs,
-            ports: PortNames::Wire,
         }
-    }
-
-    /// Choose how this module's ports are named.
-    #[must_use]
-    pub fn with_port_names(mut self, ports: PortNames) -> Self {
-        self.ports = ports;
-        self
     }
 
     /// The module's name, as it appears in `module <name> (`.
@@ -197,13 +160,36 @@ impl Module {
         &self.outputs
     }
 
-    /// How this module's ports are named.
-    #[must_use]
-    pub const fn port_names(&self) -> PortNames {
-        self.ports
+    /// The emitted identifier for each port, by the port's *name*.
+    ///
+    /// The identifiers a module writes are the legalised names of its port
+    /// wires, so a caller that wants to bind to a port — the Tiny Tapeout
+    /// wrapper does — has to ask for the identifier rather than assume the
+    /// name is already a valid one. A port called `signed` is emitted as
+    /// `signed_`, and a wrapper that connected `signed` would elaborate into a
+    /// module with an unconnected port.
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`Module::port_identifiers`] reports: an unnamed port, an empty
+    /// name, or a graph that fails its own checks.
+    pub fn port_identifiers_by_name(&self) -> Result<BTreeMap<String, String>, Error> {
+        let identifiers = self.port_identifiers()?;
+        let mut out = BTreeMap::new();
+        for (ids, identifiers) in [
+            (self.inputs(), &identifiers[..self.inputs().len()]),
+            (self.outputs(), &identifiers[self.inputs().len()..]),
+        ] {
+            for (id, identifier) in ids.iter().zip(identifiers) {
+                if let Some(name) = self.circuit().name(*id) {
+                    out.insert(name.to_string(), identifier.clone());
+                }
+            }
+        }
+        Ok(out)
     }
 
-    /// This module's port counts and widths, for comparing two definitions.
+    /// The port counts and widths, for comparing two definitions.
     ///
     /// # Errors
     ///
@@ -221,7 +207,6 @@ impl Module {
             outputs: self.outputs.len(),
             input_widths: widths(&self.inputs)?,
             output_widths: widths(&self.outputs)?,
-            ports: self.ports,
         })
     }
 

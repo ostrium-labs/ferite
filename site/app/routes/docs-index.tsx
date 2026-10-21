@@ -38,7 +38,7 @@ export default function DocsIndex() {
       </div>
       <nav className="learning-path" aria-label="Core toolchain reading path">
         <span className="data-label">The core reading path</span>
-        <ol>{["bits", "ir", "design", "sim", "rtl", "tb", "cosim", "corpus"].map(slug => <li key={slug}><Link to={`/docs/${slug}`}>{DOC_NAV.find(entry => entry.slug === slug)?.label}</Link></li>)}</ol>
+        <ol>{["bits", "ir", "design", "sim", "rtl", "tb", "cosim", "pdk", "chip", "corpus"].map(slug => <li key={slug}><Link to={`/docs/${slug}`}>{DOC_NAV.find(entry => entry.slug === slug)?.label}</Link></li>)}</ol>
         <p>Simulator and RTL are parallel consumers of the graph. This path is a reading sequence, not a build-dependency graph.</p>
       </nav>
       {DOC_GROUPS.map(group => <section className="doc__section learning-chapter" id={group.id} key={group.id}>

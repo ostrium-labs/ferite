@@ -354,6 +354,18 @@ pub enum Op {
         enable: Word,
         /// The memory's word width.
         data_width: u32,
+        /// Whether a disabled read *holds* its previous value.
+        ///
+        /// Zero is the array read: a disabled read drives zero, because an array
+        /// read is combinational and there is no previous value to hold.
+        ///
+        /// One is a synchronous read: the data is captured at the clock edge and
+        /// arrives in the next cycle, which is what a hard SRAM macro does. A
+        /// disabled read holds the last value it captured, because a macro's
+        /// output register holds when the read enable is low. That is the
+        /// difference between the two, and it is the whole reason the flag
+        /// exists.
+        hold: bool,
     },
 }
 

@@ -584,10 +584,18 @@ impl Machine {
                 address,
                 enable,
                 data_width,
+                hold,
                 ..
             } => {
                 if self.buffer[enable] & 1 == 0 {
-                    self.write_zero(dst, data_width);
+                    if hold {
+                        // A synchronous read holds its last captured value when
+                        // the read enable is low. The value is already in the
+                        // destination — this op wrote it last time — so holding
+                        // it is leaving it alone.
+                    } else {
+                        self.write_zero(dst, data_width);
+                    }
                 } else {
                     let addr = self.buffer[address] as u32;
                     if u64::from(addr) < u64::from(depth) {

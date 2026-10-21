@@ -100,11 +100,21 @@ fn build(program: &Program) -> Circuit {
                 c.case_(idents[r], arms, idents[l]).ok().map(|id| (id, lw))
             }
             11 => Some((c.reg(idents[l], one_bit, one_bit, one_bit).unwrap(), lw)),
-            _ => Some((
-                c.instance("sub", Vec::new(), vec![idents[l], idents[r]], lw)
-                    .unwrap(),
-                lw,
-            )),
+            // An instance is a statement, not a value: it has no width of its
+            // own, so it does not join the pool of signals the later steps draw
+            // from. It is still built, so the graph that is checked contains one.
+            _ => {
+                c.instance(
+                    "sub",
+                    Vec::new(),
+                    vec![
+                        ferrite_lithic_ir::InstancePort::input("l", idents[l], lw),
+                        ferrite_lithic_ir::InstancePort::input("r", idents[r], rw),
+                    ],
+                )
+                .unwrap();
+                None
+            }
         };
         if let Some((id, w)) = made {
             widths.push(w);
@@ -234,7 +244,8 @@ fn reference_width(c: &Circuit, id: NodeId) -> u32 {
         Node::Reg { data, .. } => reference_width(c, *data),
         Node::Mem { data_width, .. } => *data_width,
         Node::ReadPort { data_width, .. } => *data_width,
-        Node::Instance { output_width, .. } => *output_width,
+        // An instance is a statement, not a value: it has no width of its own.
+        Node::Instance { .. } => 0,
     }
 }
 

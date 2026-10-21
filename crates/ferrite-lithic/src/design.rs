@@ -36,6 +36,13 @@ pub enum Error {
         /// The arena it was passed into.
         used_in: u64,
     },
+    /// A blackbox output was asked for by a name the module does not have.
+    UnknownInstanceOutput {
+        /// The name that was asked for.
+        name: String,
+        /// The names the module does have.
+        available: Vec<String>,
+    },
 }
 
 impl Error {
@@ -80,6 +87,30 @@ impl fmt::Display for Error {
                  of its current value, or build the signal in the design that will \
                  use it."
             ),
+            Self::UnknownInstanceOutput { name, available } => {
+                let mut list = String::new();
+                for (index, port) in available.iter().enumerate() {
+                    if index > 0 {
+                        list.push_str(", ");
+                    }
+                    list.push_str(port);
+                }
+                if available.is_empty() {
+                    write!(
+                        f,
+                        "this blackbox has no output ports, so `{name}` is not one of \
+                         them. Check the module's port list: an output port is a net \
+                         the module drives, and it must be an undriven wire."
+                    )
+                } else {
+                    write!(
+                        f,
+                        "this blackbox has no output port named `{name}`. It has: \
+                         {list}. The name is the module's own, so check the \
+                         module's port list rather than guessing."
+                    )
+                }
+            }
         }
     }
 }
@@ -195,6 +226,98 @@ impl PartialEq for Signal {
 }
 
 impl Eq for Signal {}
+
+/// Which way a blackbox's port points.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BlackboxDirection {
+    /// Driven from inside the design, read by the module.
+    Input,
+    /// Driven by the module, read inside the design.
+    Output,
+}
+
+/// One port of a blackbox, as the caller writes it.
+///
+/// A port is a name, a direction and a signal. The name is the connection: it
+/// becomes `.name(signal)` in the generated Verilog, and it is the name the
+/// module itself uses — `A_CLK`, not `clock`.
+#[derive(Clone, Copy, Debug)]
+pub struct BlackboxPort<'a> {
+    /// The port's name, as the module spells it.
+    pub name: &'a str,
+    /// Which way the port points.
+    pub direction: BlackboxDirection,
+    /// The signal on this side of the connection.
+    pub signal: &'a Signal,
+}
+
+impl<'a> BlackboxPort<'a> {
+    /// A port the design drives and the module reads.
+    #[must_use]
+    pub fn input(name: &'a str, signal: &'a Signal) -> Self {
+        Self {
+            name,
+            direction: BlackboxDirection::Input,
+            signal,
+        }
+    }
+
+    /// A port the module drives and the design reads.
+    ///
+    /// The signal must be an undriven wire: the instance takes it over.
+    #[must_use]
+    pub fn output(name: &'a str, signal: &'a Signal) -> Self {
+        Self {
+            name,
+            direction: BlackboxDirection::Output,
+            signal,
+        }
+    }
+}
+
+/// A blackbox instance, and the signals it drives.
+///
+/// The outputs are named, because a module with more than one output cannot be
+/// indexed by position in any way a reader would trust: `A_DOUT` and `A_BIST_*
+/// are not interchangeable, and a macro's output order is the foundry's, not
+/// ours.
+#[derive(Clone, Debug)]
+pub struct Instance {
+    id: Signal,
+    outputs: Vec<(String, Signal)>,
+}
+
+impl Instance {
+    /// The instance node itself.
+    ///
+    /// It is a statement, not a value: its outputs are the signals below.
+    #[must_use]
+    pub fn signal(&self) -> &Signal {
+        &self.id
+    }
+
+    /// The signals the instance drives, in the order the ports were declared.
+    #[must_use]
+    pub fn outputs(&self) -> &[(String, Signal)] {
+        &self.outputs
+    }
+
+    /// One output, by the port's name.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::UnknownInstanceOutput`] if the module has no such port.
+    pub fn output(&self, name: &str) -> Result<&Signal, Error> {
+        self.outputs
+            .iter()
+            .find(|(port, _)| port == name)
+            .map(|(_, signal)| signal)
+            .ok_or_else(|| Error::UnknownInstanceOutput {
+                name: name.to_string(),
+                available: self.outputs.iter().map(|(p, _)| p.clone()).collect(),
+            })
+    }
+}
 
 /// Builds a circuit.
 ///
@@ -932,9 +1055,64 @@ impl Design {
     }
 
     /// A memory. Reads and writes go through separate port calls.
+    ///
+    /// The memory starts as all zeros and reads asynchronously. A memory with
+    /// contents, a read latency, or a hard-macro form is
+    /// [`mem_with`](Design::mem_with) and [`mem_as_macro`](Design::mem_as_macro).
     pub fn mem(&self, data_width: u32, depth: u32) -> Result<Signal, Error> {
         let id = self.arena.circuit.borrow_mut().mem(data_width, depth)?;
         Ok(self.push(id))
+    }
+
+    /// A memory with an optional initial image and an optional read latency.
+    ///
+    /// # Why a memory needs more than a shape
+    ///
+    /// - **Contents.** A firmware image and a protocol lookup table are not
+    ///   zeros. The image is in address order, and the words not listed are
+    ///   zero. The simulator seeds the memory with it and the emitter writes it
+    ///   into the array, so both backends start from the same state.
+    /// - **Read latency.** Zero is an array read: the data is there in the same
+    ///   cycle as the address. One is a synchronous read: the data is captured
+    ///   at the clock edge and arrives in the next cycle, which is what every
+    ///   hard SRAM macro on the competition's process does.
+    pub fn mem_with(
+        &self,
+        data_width: u32,
+        depth: u32,
+        initial: Option<Vec<Bits>>,
+        read_latency: u32,
+    ) -> Result<Signal, Error> {
+        let id =
+            self.arena
+                .circuit
+                .borrow_mut()
+                .mem_with(data_width, depth, initial, read_latency)?;
+        Ok(self.push(id))
+    }
+
+    /// Build this memory out of a hard macro instead of an array of flip-flops.
+    ///
+    /// The macro is a *different implementation* of the same memory, not a
+    /// different circuit: the simulator still models the memory, and the
+    /// emitter builds the macro instead. The macro's read latency must match
+    /// the memory's, because the latency is when the data arrives and the two
+    /// backends must not disagree about that.
+    ///
+    /// The ports are named and are the macro's own — `A_CLK`, `A_ADDR`, `A_DIN`
+    /// and the rest — because a foundry macro's interface is not ours to
+    /// renumber.
+    pub fn mem_as_macro(
+        &self,
+        mem: &Signal,
+        macro_form: ferrite_lithic_ir::MemMacro,
+    ) -> Result<(), Error> {
+        self.same_design(&[mem])?;
+        self.arena
+            .circuit
+            .borrow_mut()
+            .set_mem_macro(mem.id, macro_form)?;
+        Ok(())
     }
 
     /// A memory's data width and depth.
@@ -990,18 +1168,39 @@ impl Design {
         Ok(self.push(id))
     }
 
-    /// A submodule instance with a single output.
+    /// Instantiate a module whose definition lives outside this design.
     ///
-    /// One output only, because a multi-signal submodule needs a bundle type and
-    /// that design is not settled. This is an A1 limitation, not a position.
-    pub fn instance(
+    /// This is how a **blackbox** is built: a hard SRAM macro, a RISC-V core, a
+    /// vendor PLL. The module is not defined here and is not emitted here; the
+    /// instantiation site names its ports, and the ports are the module's own.
+    ///
+    /// # Why named ports, and not the A1 positional scheme
+    ///
+    /// A1 bound a submodule positionally — `.i0`, `.i1`, `.o0` — because the
+    /// graph had nowhere to put a port's *name*. That was a workaround for a
+    /// limit, and it cannot express a blackbox: the IHP SRAM macro the
+    /// competition's process provides has seventeen ports named by the foundry,
+    /// and a RISC-V core has twenty-odd outputs. Neither can be bound
+    /// positionally to a module this project did not write.
+    ///
+    /// # What an output port's signal must be
+    ///
+    /// An output port's signal is a net the instance *drives*, so it must be a
+    /// wire with no driver. Use [`Design::wire`] to make one; the instance
+    /// takes it over.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Ir`] for a foreign signal, a duplicate or empty port name, a
+    /// width mismatch, or an output port bound to something that is not an
+    /// undriven wire.
+    pub fn blackbox(
         &self,
-        name: &str,
+        module: &str,
         params: &[(&str, Bits)],
-        inputs: &[Signal],
-        output_width: u32,
-    ) -> Result<Signal, Error> {
-        let mut all: Vec<&Signal> = inputs.iter().collect();
+        ports: &[BlackboxPort<'_>],
+    ) -> Result<Instance, Error> {
+        let mut all: Vec<&Signal> = ports.iter().map(|p| p.signal).collect();
         all.retain(|s| !s.belongs_to(&self.arena));
         if !all.is_empty() {
             return Err(Error::ForeignSignal {
@@ -1013,13 +1212,30 @@ impl Design {
             .iter()
             .map(|(k, v)| ((*k).to_string(), v.clone()))
             .collect::<Vec<_>>();
-        let ids = inputs.iter().map(Signal::id).collect::<Vec<_>>();
+        let mut built = Vec::with_capacity(ports.len());
+        let mut outputs = Vec::new();
+        for port in ports {
+            let width = port.signal.width();
+            let entry = match port.direction {
+                BlackboxDirection::Input => {
+                    ferrite_lithic_ir::InstancePort::input(port.name, port.signal.id, width)
+                }
+                BlackboxDirection::Output => {
+                    outputs.push((port.name.to_string(), self.push(port.signal.id)));
+                    ferrite_lithic_ir::InstancePort::output(port.name, port.signal.id, width)
+                }
+            };
+            built.push(entry);
+        }
         let id = self
             .arena
             .circuit
             .borrow_mut()
-            .instance(name, params, ids, output_width)?;
-        Ok(self.push(id))
+            .instance(module, params, built)?;
+        Ok(Instance {
+            id: self.push(id),
+            outputs,
+        })
     }
 
     // ------------------------------------------------------------ queries

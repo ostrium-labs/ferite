@@ -321,16 +321,17 @@ A tied-*high* control is left in: a register whose reset is permanently asserted
 a design that does not do what it looks like it does, and the emitted text is where
 that should become visible.
 
-**Instances have a positional port ABI, because the IR has nowhere to put port
-names.** `Node::Instance` records a submodule's name, its parameters and its
-inputs' *order* — not the names of its ports, because the graph has no field for
-them. So an instantiation site cannot name what it connects to. We made the ABI
-positional: inputs are `.i0`, `.i1`, … and the single output is `.o0`, and
-`Module::with_port_names(PortNames::Positional)` emits a submodule under those
-names, which reserves them before any user name so a signal called `i0` is renamed
-rather than allowed to shadow a port. The packed-output vector the reference uses
-(`docs/conversion_to_rtl.md:249-260`) degenerates to the single output here and
-becomes visible again when instances grow bundles.
+**Instances bind by port name.** `Node::Instance` records a module's name, its
+parameters and a list of *named* port connections. The A1 scheme was positional —
+`.i0`, `.i1`, …, `.o0` — because the graph had nowhere to put a port's name, and
+it worked for a one-output submodule. It could not express a blackbox, and a
+blackbox is what the competition chip needs: the IHP SRAM macro has seventeen
+ports named by the foundry, and a RISC-V core has twenty-odd outputs. So the
+ports are named, the name is the connection, and the positional scheme was removed
+rather than left as a second way to do the same thing. The reference's packed
+output vector (`docs/conversion_to_rtl.md:249-260`) becomes a list of named output
+ports here, and the bundle type it wanted is no longer needed: a name says what
+the signal is, which is more than a position ever did.
 
 **The module names its clock, and dead logic is dropped.** A memory write port
 carries no clock, so write ports are clocked by the module's declared clock, and a

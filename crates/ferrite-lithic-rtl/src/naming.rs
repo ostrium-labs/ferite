@@ -23,7 +23,8 @@
 //!
 //! 1. **Ports**, in port-list order — `src/circuit.ml:83-104, 164-211`. A port's
 //!    identifier is its ABI, so it is allocated before anything can take the name,
-//!    and under [`PortNames::Wire`] it is the name on the wire verbatim.
+//!    and it is the name on the wire verbatim. It is also the name an
+//!    instantiation site binds to, which is why it cannot be renamed.
 //! 2. **Explicitly named signals**, in id order. User names win over derived ones.
 //! 3. **Unnamed signals**, in id order — deliberately *not* depth-first, so names
 //!    land in roughly the order the logic does rather than in the order a recursive
@@ -49,7 +50,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use ferrite_lithic_ir::{Node, NodeId};
 
 use crate::error::Error;
-use crate::module::{Direction, Module, PortNames};
+use crate::module::{Direction, Module};
 
 /// Verilog-2001 reserved words, plus the SystemVerilog-2005 core that every tool
 /// in this project accepts.
@@ -442,55 +443,37 @@ impl NameMap {
             }
         }
 
-        // State 0: positional port names are reserved before anything else can
-        // claim them, or a signal called `i0` would break an instance binding.
-        if module.port_names() == PortNames::Positional {
-            for index in 0..module.inputs().len() {
-                mangler.reserve(&format!("i{index}"));
-            }
-            for index in 0..module.outputs().len() {
-                mangler.reserve(&format!("o{index}"));
-            }
-        }
-
         // State 1: ports, in port-list order.
+        //
+        // A port's identifier is the name on its wire, which is also the name an
+        // instantiation site binds to. There used to be a second scheme here,
+        // positional (`.i0`, `.o0`), for the case where the graph had nowhere to
+        // put a port's name; instances now carry their port names, so the
+        // positional scheme had nothing left to bind to and was removed rather
+        // than left as a second way to do the same thing.
         for (ids, direction) in [
             (module.inputs(), Direction::Input),
             (module.outputs(), Direction::Output),
         ] {
-            for (index, id) in ids.iter().enumerate() {
-                let name = match module.port_names() {
-                    PortNames::Positional => {
-                        let base = match direction {
-                            Direction::Input => format!("i{index}"),
-                            Direction::Output => format!("o{index}"),
-                        };
-                        // Reserved above, so this cannot fail; a suffix here would
-                        // silently break every instantiation site.
-                        base
-                    }
-                    PortNames::Wire => {
-                        let raw = circuit
-                            .name(*id)
-                            .ok_or(Error::UnnamedPort { direction, id: *id })?;
-                        if raw.is_empty() {
-                            return Err(Error::EmptySignalName { id: *id });
-                        }
-                        // Deliberately *not* run through `take`: a port keeps its
-                        // name, and a second port wanting it gets the suffix rather
-                        // than the first one silently renamed.
-                        let legal = legalise(raw);
-                        let mut candidate = legal.clone();
-                        let mut suffix = 1u32;
-                        while mangler.taken.contains(&candidate.to_ascii_lowercase()) {
-                            candidate = format!("{legal}_{suffix}");
-                            suffix += 1;
-                        }
-                        mangler.reserve(&candidate);
-                        candidate
-                    }
-                };
-                map.names.insert(*id, name);
+            for id in ids {
+                let raw = circuit
+                    .name(*id)
+                    .ok_or(Error::UnnamedPort { direction, id: *id })?;
+                if raw.is_empty() {
+                    return Err(Error::EmptySignalName { id: *id });
+                }
+                // Deliberately *not* run through `take`: a port keeps its
+                // name, and a second port wanting it gets the suffix rather
+                // than the first one silently renamed.
+                let legal = legalise(raw);
+                let mut candidate = legal.clone();
+                let mut suffix = 1u32;
+                while mangler.taken.contains(&candidate.to_ascii_lowercase()) {
+                    candidate = format!("{legal}_{suffix}");
+                    suffix += 1;
+                }
+                mangler.reserve(&candidate);
+                map.names.insert(*id, candidate);
             }
         }
 
@@ -524,7 +507,19 @@ impl NameMap {
             map.names.insert(*id, name);
             // An instantiation also needs a *label*, which lives in the same
             // namespace: a label colliding with a signal is a Verilog error.
-            if matches!(node, Node::Instance { .. }) {
+            //
+            // A memory built out of a hard macro is an instantiation site too,
+            // and it needs a label for the same reason: the macro instance is
+            // named, and two unnamed instances of one macro would collide.
+            let is_instance = matches!(node, Node::Instance { .. })
+                || matches!(
+                    node,
+                    Node::Mem {
+                        macro_form: Some(_),
+                        ..
+                    }
+                );
+            if is_instance {
                 let label = mangler.take(&format!("u_{kind}"));
                 map.labels.insert(*id, label);
             }

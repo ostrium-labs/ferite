@@ -231,10 +231,19 @@ fn every_operation_has_a_spelling() {
     let from_mem = d.add(&held, &read).unwrap();
     d.output("q", 8, &from_mem).unwrap();
     let depth = Bits::constant(16, 32).unwrap();
+    let sub_q = d.wire(8).unwrap();
     let sub = d
-        .instance("fifo", &[("DEPTH", depth)], &[a.clone(), b.clone()], 8)
+        .blackbox(
+            "fifo",
+            &[("DEPTH", depth)],
+            &[
+                ferrite_lithic::BlackboxPort::input("a", &a),
+                ferrite_lithic::BlackboxPort::input("b", &b),
+                ferrite_lithic::BlackboxPort::output("q", &sub_q),
+            ],
+        )
         .unwrap();
-    d.output("last", 8, &sub).unwrap();
+    d.output("last", 8, sub.output("q").unwrap()).unwrap();
 
     let text = module(&d, &clk, "every_op").emit().unwrap();
     for expected in [
@@ -261,9 +270,9 @@ fn every_operation_has_a_spelling() {
         "if (we) signal_Mem[addr] <= a;",
         "assign signal_ReadPort = 1'h1 ? signal_Mem[addr] : '0;",
         "fifo #(.DEPTH(32'h00000010)) u_Instance (",
-        ".i0 (a),",
-        ".i1 (b),",
-        ".o0 (signal_Instance)",
+        ".a (a),",
+        ".b (b),",
+        ".q (signal_Wire)",
     ] {
         assert!(text.contains(expected), "missing {expected:?} in\n{text}");
     }
@@ -577,12 +586,20 @@ fn an_instantiation_legalises_the_module_name() {
     let mut circuit = Circuit::new();
     let a = circuit.wire(8).unwrap();
     circuit.set_name(a, "a").unwrap();
-    let sub = circuit
-        .instance("case-analyzer", Vec::new(), vec![a], 8)
+    let sub_out = circuit.wire(8).unwrap();
+    circuit
+        .instance(
+            "case-analyzer",
+            Vec::new(),
+            vec![
+                ferrite_lithic_ir::InstancePort::input("a", a, 8),
+                ferrite_lithic_ir::InstancePort::output("q", sub_out, 8),
+            ],
+        )
         .unwrap();
     let out = circuit.wire(8).unwrap();
     circuit.set_name(out, "out").unwrap();
-    circuit.drive(out, sub).unwrap();
+    circuit.drive(out, sub_out).unwrap();
     let text = Module::combinational("top", circuit, vec![a], vec![out])
         .emit()
         .unwrap();
@@ -662,4 +679,75 @@ fn a_signature_is_the_port_shape() {
     assert_eq!(signature.outputs, 1);
     assert_eq!(signature.input_widths, vec![1, 8]);
     assert_eq!(signature.output_widths, vec![8]);
+}
+
+/// A memory with a read latency is a register, and has to be declared as one.
+///
+/// A latency-bearing read port is driven by an `always` block — the capture that
+/// makes the read synchronous — and a net that is driven by an `always` block
+/// has to be a `reg`. Declaring it a `wire` produces text that does not
+/// elaborate, which is the failure mode a golden test catches and a reader
+/// does not.
+#[test]
+fn a_synchronous_read_port_is_declared_as_a_register() {
+    let d = Design::new();
+    let clk = d.input("clk", 1).unwrap();
+    let addr = d.input("addr", 4).unwrap();
+    let data = d.input("data", 8).unwrap();
+    let en = d.constant(true);
+
+    // A memory with a read latency of one: the data is captured at the clock
+    // edge and arrives in the next cycle.
+    let mem = d.mem_with(8, 16, None, 1).unwrap();
+    d.write_port(&mem, &data, &addr, &d.constant(false))
+        .unwrap();
+    let read = d.read_port(&mem, &addr, &en).unwrap();
+    d.output("q", 8, &read).unwrap();
+
+    let text = module(&d, &clk, "sync_read").emit().unwrap();
+    assert!(
+        text.contains("reg [7:0] signal_ReadPort;"),
+        "a net driven by an always block has to be a reg:\n{text}"
+    );
+    assert!(
+        !text.contains("wire [7:0] signal_ReadPort;"),
+        "a wire cannot be driven by an always block:\n{text}"
+    );
+    assert!(
+        text.contains("always @(posedge clk) begin"),
+        "the capture is at the edge:\n{text}"
+    );
+    // And a disabled read holds, which is what a macro's output register does
+    // and what an array read does not.
+    assert!(
+        text.contains("else signal_ReadPort <= signal_ReadPort;"),
+        "a disabled synchronous read holds its value:\n{text}"
+    );
+}
+
+/// An array read is combinational, and stays a wire.
+///
+/// The latency change must not have moved the *array* read: a design that reads
+/// an array and a design that reads a macro are different circuits, and only
+/// the macro has a latency.
+#[test]
+fn an_array_read_port_is_still_a_wire() {
+    let d = Design::new();
+    let clk = d.input("clk", 1).unwrap();
+    let addr = d.input("addr", 4).unwrap();
+    let data = d.input("data", 8).unwrap();
+    let en = d.constant(true);
+
+    let mem = d.mem(8, 16).unwrap();
+    d.write_port(&mem, &data, &addr, &d.constant(false))
+        .unwrap();
+    let read = d.read_port(&mem, &addr, &en).unwrap();
+    d.output("q", 8, &read).unwrap();
+
+    let text = module(&d, &clk, "async_read").emit().unwrap();
+    assert!(text.contains("wire [7:0] signal_ReadPort;"), "{text}");
+    assert!(
+        text.contains("assign signal_ReadPort = 1'h1 ? signal_Mem[addr] : '0;"),
+        "an array read is combinational:\n{text}"
+    );
 }

@@ -47,7 +47,15 @@ fn every_kind() -> (Circuit, Vec<ferrite_lithic_ir::NodeId>) {
         c.replicate(a, 2).unwrap(),
         c.ite(one_bit, a, b).unwrap(),
         c.reg(a, one_bit, one_bit, one_bit).unwrap(),
-        c.instance("sub", Vec::new(), vec![a, b], 8).unwrap(),
+        c.instance(
+            "sub",
+            Vec::new(),
+            vec![
+                ferrite_lithic_ir::InstancePort::input("a", a, 8),
+                ferrite_lithic_ir::InstancePort::input("b", b, 8),
+            ],
+        )
+        .unwrap(),
     ] {
         made.push(id);
     }

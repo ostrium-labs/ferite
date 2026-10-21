@@ -91,6 +91,22 @@ export const CRATES: Crate[] = [
     dependencies: ["design", "sim", "bits"],
   },
   {
+    name: "ferrite-lithic-pdk",
+    tests: 4,
+    tier: "—",
+    what: "What a process is: tiles, flip-flops, and the memory macros with measured areas.",
+    doc: "pdk",
+    dependencies: [],
+  },
+  {
+    name: "ferrite-lithic-chip",
+    tests: 16,
+    tier: "—",
+    what: "The submission boundary: the pin budget, the tt_um wrapper, and a memory on a foundry macro.",
+    doc: "chip",
+    dependencies: ["design", "ir", "pdk", "rtl"],
+  },
+  {
     name: "ferrite-lithic-corpus",
     tests: 305,
     tier: "—",
@@ -146,7 +162,7 @@ export const TIERS: Tier[] = [
 /** Project totals from the audited repository snapshot. Per-crate and tier tables
  * include historical counts and planned entries, so totals are recorded separately. */
 export const PROJECT_STATS = {
-  tests: 811,
+  tests: 836,
   crates: CRATES.length,
   designs: TIERS.reduce((sum, tier) => sum + tier.designs.length, 0),
   cosimCoverage: 100,

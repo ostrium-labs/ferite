@@ -72,6 +72,8 @@ export const READING_ORDER = [
   "wave",
   "tb",
   "cosim",
+  "pdk",
+  "chip",
   "corpus",
   "findings",
 ] as const;

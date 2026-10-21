@@ -40,6 +40,15 @@ Hardcaml revision will be listed here, and the MIT notice retained:
   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
   SOFTWARE.
 
+IHP Open PDK (https://github.com/IHP-GmbH/IHP-Open-PDK), Apache License 2.0,
+Copyright (c) 2024 IHP PDK Authors. The memory-macro table in
+ferrite-lithic-pdk is read out of the IHP open PDK's own files: the cell names
+and the areas are the `MACRO` and `SIZE` records in
+ihp-sg13g2/libs.ref/sg13g2_sram/lef/, and the port lists are the port lists in
+ihp-sg13g2/libs.ref/sg13g2_sram/verilog/. No PDK file has been copied into this
+repository; the table is a transcription of published interface and geometry
+data, and the files it was read from are named here so that it can be checked.
+
 LLVM (https://llvm.org), Apache License 2.0 with LLVM Exceptions. Referenced as
 a design reference for the possible FIRRTL/CIRCT route recorded in
 docs/design-notes.md. Not vendored and not linked; the Verilog emitter in

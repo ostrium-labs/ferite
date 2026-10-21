@@ -11,7 +11,7 @@
 use ferrite_lithic::{Design, Signal};
 use ferrite_lithic_bits::Bits;
 use ferrite_lithic_ir::Circuit;
-use ferrite_lithic_rtl::{Error, Module, PortNames};
+use ferrite_lithic_rtl::{Error, Module};
 
 /// Build a combinational module from `build`, with its single output named `out`.
 fn emit(name: &str, build: impl FnOnce(&Design) -> Signal) -> String {
@@ -179,32 +179,59 @@ fn an_empty_name_is_refused() {
 fn instance_labels_come_from_the_same_namespace() {
     let text = emit("labels", |d| {
         let a = d.input("a", 8).unwrap();
-        let first = d.instance("sub", &[], std::slice::from_ref(&a), 8).unwrap();
-        let second = d.instance("sub", &[], &[a], 8).unwrap();
-        d.concat(&[first, second]).unwrap()
+        let first_out = d.wire(8).unwrap();
+        let second_out = d.wire(8).unwrap();
+        let first = d
+            .blackbox(
+                "sub",
+                &[],
+                &[
+                    ferrite_lithic::BlackboxPort::input("a", &a),
+                    ferrite_lithic::BlackboxPort::output("q", &first_out),
+                ],
+            )
+            .unwrap();
+        let second = d
+            .blackbox(
+                "sub",
+                &[],
+                &[
+                    ferrite_lithic::BlackboxPort::input("a", &a),
+                    ferrite_lithic::BlackboxPort::output("q", &second_out),
+                ],
+            )
+            .unwrap();
+        d.concat(&[
+            first.output("q").unwrap().clone(),
+            second.output("q").unwrap().clone(),
+        ])
+        .unwrap()
     });
     assert!(text.contains("u_Instance ("), "{text}");
     assert!(text.contains("u_Instance_1 ("), "{text}");
 }
 
-/// Positional port names are reserved before any user name, so a signal called `i0`
-/// is renamed rather than allowed to shadow a port and break the binding.
+/// A port's identifier is the name on its wire, and it is also the name an
+/// instantiation site binds to.
+///
+/// There used to be a second scheme, positional (`.i0`, `.o0`), for the case
+/// where the graph had nowhere to put a port's name. Instances now carry their
+/// port names, so the positional scheme had nothing left to bind to and was
+/// removed rather than left as a second way to do the same thing.
 #[test]
-fn positional_port_names_are_reserved_before_user_names() {
+fn a_ports_identifier_is_the_name_on_its_wire() {
     let d = Design::new();
     let a = d.input("a", 8).unwrap();
     let b = d.input("b", 8).unwrap();
     let sum = d.add(&a, &b).unwrap();
     d.set_name(&sum, "i0").unwrap();
     d.output("out", 8, &sum).unwrap();
-    let text = module(&d, "positional")
-        .with_port_names(PortNames::Positional)
-        .emit()
-        .unwrap();
-    assert!(text.contains("input  wire [7:0] i0,"), "{text}");
-    assert!(text.contains("output wire [7:0] o0"), "{text}");
-    assert!(text.contains("wire [7:0] i0_1;"), "{text}");
-    assert!(text.contains("assign o0 = i0_1;"), "{text}");
+    let text = module(&d, "named").emit().unwrap();
+    assert!(text.contains("input  wire [7:0] a,"), "{text}");
+    assert!(text.contains("output wire [7:0] out"), "{text}");
+    // `i0` is an ordinary name now, so it is kept rather than reserved.
+    assert!(text.contains("wire [7:0] i0;"), "{text}");
+    assert!(text.contains("assign out = i0;"), "{text}");
 }
 
 /// A port with no name has no ABI, so there is nothing to derive one from.
@@ -275,45 +302,42 @@ fn widths_are_declared_as_ranges() {
     assert!(text.contains("wire [0:0] signal_Select;"), "{text}");
 }
 
-/// A positional module needs no port names at all, which is the ergonomic half of
-/// why the scheme exists: a submodule can be declared without anyone inventing
-/// interface names.
+/// A module's ports need names, because the name is the ABI.
+///
+/// There was a positional scheme for this — a submodule declared without anyone
+/// inventing interface names, and bound as `.i0`, `.i1`, `.o0`. It is gone,
+/// because an instance now carries its port names: a blackbox's ports are the
+/// foundry's names and cannot be invented at all.
 #[test]
-fn a_positional_module_needs_no_port_names() {
+fn a_module_needs_names_for_its_ports() {
     let mut circuit = Circuit::new();
     let a = circuit.wire(8).unwrap();
     let b = circuit.wire(8).unwrap();
     let sum = circuit.add(a, b).unwrap();
     let out = circuit.wire(8).unwrap();
     circuit.drive(out, sum).unwrap();
-    let text = Module::combinational("anonymous", circuit, vec![a, b], vec![out])
-        .with_port_names(PortNames::Positional)
+    let err = Module::combinational("anonymous", circuit, vec![a, b], vec![out])
         .emit()
-        .unwrap();
-    assert!(text.contains("input  wire [7:0] i0,"), "{text}");
-    assert!(text.contains("output wire [7:0] o0"), "{text}");
-    assert!(text.contains("assign o0 = signal_Add;"), "{text}");
+        .unwrap_err();
+    assert!(matches!(err, Error::UnnamedPort { .. }), "{err}");
 }
 
 /// The port identifier a module emits and the one an instantiation site connects
-/// are the same string, which is the whole point of the positional scheme.
+/// are the same string, which is the whole point of naming a port.
 #[test]
-fn an_instantiation_site_binds_to_a_positional_module() {
-    // The submodule: two inputs, one output, named positionally.
+fn an_instantiation_site_binds_to_a_module_by_its_port_names() {
+    // The submodule: two inputs, one output, named.
     let child = Design::new();
     let child_x = child.input("x", 8).unwrap();
     let child_y = child.input("y", 8).unwrap();
     let sum = child.add(&child_x, &child_y).unwrap();
     child.output("q", 8, &sum).unwrap();
-    let child_text = module(&child, "adder")
-        .with_port_names(PortNames::Positional)
-        .emit()
-        .unwrap();
-    assert!(child_text.contains("input  wire [7:0] i0,"), "{child_text}");
-    assert!(child_text.contains("input  wire [7:0] i1,"), "{child_text}");
-    assert!(child_text.contains("output wire [7:0] o0"), "{child_text}");
+    let child_text = module(&child, "adder").emit().unwrap();
+    assert!(child_text.contains("input  wire [7:0] x,"), "{child_text}");
+    assert!(child_text.contains("input  wire [7:0] y,"), "{child_text}");
+    assert!(child_text.contains("output wire [7:0] q"), "{child_text}");
     assert!(
-        child_text.contains("assign o0 = signal_Add;"),
+        child_text.contains("assign q = signal_Add;"),
         "{child_text}"
     );
 
@@ -321,15 +345,21 @@ fn an_instantiation_site_binds_to_a_positional_module() {
     let parent = Design::new();
     let x = parent.input("x", 8).unwrap();
     let y = parent.input("y", 8).unwrap();
+    let q = parent.wire(8).unwrap();
     let sub = parent
-        .instance("adder", &[], &[x.clone(), y.clone()], 8)
+        .blackbox(
+            "adder",
+            &[],
+            &[
+                ferrite_lithic::BlackboxPort::input("x", &x),
+                ferrite_lithic::BlackboxPort::input("y", &y),
+                ferrite_lithic::BlackboxPort::output("q", &q),
+            ],
+        )
         .unwrap();
-    parent.output("q", 8, &sub).unwrap();
+    parent.output("q", 8, sub.output("q").unwrap()).unwrap();
     let parent_text = module(&parent, "wrapper").emit().unwrap();
-    assert!(parent_text.contains(".i0 (x),"), "{parent_text}");
-    assert!(parent_text.contains(".i1 (y),"), "{parent_text}");
-    assert!(
-        parent_text.contains(".o0 (signal_Instance)"),
-        "{parent_text}"
-    );
+    assert!(parent_text.contains(".x (x),"), "{parent_text}");
+    assert!(parent_text.contains(".y (y),"), "{parent_text}");
+    assert!(parent_text.contains(".q (signal_Wire)"), "{parent_text}");
 }

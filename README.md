@@ -14,7 +14,8 @@ Status
 **Phases A1 through A3 are implemented and tested.** That is every crate in the
 layout table below, all nine of them green on their own: the bits crate, the IR,
 the front end, the simulator, the emitter, the derive macro, the waveform data,
-the cosimulator and the step testbench.
+the cosimulator and the step testbench. Two more crates carry the submission
+boundary: the process knowledge and the Tiny Tapeout wrapper.
 
 **The whole tree is green, and the corpus is what made it that way.**
 Twenty-one designs across seven tiers, each differentially tested against the crate
@@ -39,14 +40,32 @@ one is written down in `DETAILS.md`.
 
 The design notes that settle the simulator's execution model, the Verilog
 emitter's contract and the port-list rule are in `docs/design-notes.md`, the
-nineteen accepted decisions are in `docs/adr/`, and `DETAILS.md` is the single
-place everything known lives.
+twenty-three accepted decisions are in `docs/adr/`, and `DETAILS.md` is the
+single place everything known lives.
 
-The documentation site is in [`site/`](site/). Sixteen pages in reading order:
+**The competition chip's gate is open.** The plan's week-1 risk was *"our DSL
+cannot instantiate CMOS5L SRAM macros"*, and it took four things: named instance
+ports, because a foundry macro's seventeen ports cannot be bound positionally
+(ADR-0020); a memory's read latency, because a hard SRAM's read is synchronous
+and an array's is not, and two backends that disagree about that are two
+circuits (ADR-0021); a macro as a *lowering* of a memory rather than a second
+kind of circuit, so the simulator still models it (ADR-0021); and the submission
+boundary as two crates of its own — the process knowledge in
+`ferrite-lithic-pdk` and the Tiny Tapeout wrapper and its pin budget in
+`ferrite-lithic-chip` (ADR-0022).
+
+**And the plan's memory budget was wrong by three to six times, which is
+recorded rather than quietly fixed.** The instruction memory is 2–4 KB, not
+11–26 KB, because 24 tiles is the whole die and a macro costs its *bounding
+box* rather than its area. ADR-0023 has the table, measured out of the IHP
+PDK's own LEF files, and what it does to the firmware target.
+
+The documentation site is in [`site/`](site/). Eighteen pages in reading order:
 the background a hardware DSL needs, the OCaml and Hardcaml lineage this is a port
-of, an honest accounting of what Rust's type system does and does not check, and
-then the nine crates bottom-up. It is a React Router app with Fumadocs MDX as the
-content layer; `site/README.md` explains why it is not using the Fumadocs UI, and
+of, an honest accounting of what Rust's type system does and does not check, then
+the nine tool crates bottom-up, then the two submission-boundary crates, then the
+corpus. It is a React Router app with Fumadocs MDX as the content layer;
+`site/README.md` explains why it is not using the Fumadocs UI, and
 `site/verify.mjs` drives a real browser over every route.
 
 ### What finishing the entropy tier cost
@@ -647,6 +666,8 @@ Crate layout
 | `ferrite-lithic-cosim` | Verilator equivalence checking against `ferrite-lithic-sim` | A2 **done** |
 | `ferrite-lithic-tb` | Coroutine/async-style step testbenches, where every `.await` is one clock edge | A3 **done** |
 | `ferrite-lithic-corpus` | Verified designs in seven tiers, each checked against the crate that defines it, through the step testbench, and against Verilator | — |
+| `ferrite-lithic-pdk` | Process knowledge: tile geometry, flip-flops per tile, and the memory macros with their names, port lists and measured areas | — **new** |
+| `ferrite-lithic-chip` | The Tiny Tapeout submission boundary: the pin budget, the `tt_um_*` wrapper, the `info.yaml`, and a memory on a foundry macro | — **new** |
 
 Design decisions
 ----------------
@@ -670,14 +691,28 @@ Design decisions
 Known gaps
 ----------
 
-**There is no initialised-memory node in the IR.** `Design::mem` is zero-filled in
-both backends and the simulator's initialise-to-value refuses it, so every lookup
-table in the corpus — AES's S-box, the DFA transition tables, the bit-packing
-masks — is a `Design::case_` or a multiplexer tree. That is close to the truth for
-a nibble LUT and a lie for a 256-entry alphabet map, a Huffman decode table or a
-regex DFA, all of which are block RAM in silicon. It is the single highest-value
-addition left to the toolchain, and `Design::rom` documents the cost instead of
-hiding it.
+**A memory can now hold contents, and a lookup table is still a multiplexer
+tree.** `Node::Mem` has an `initial` image and the simulator seeds it and the
+emitter writes it out, so a firmware image is data rather than an assumption. But
+`Design::rom` is still a `Design::case_`: a 256-entry alphabet map, a Huffman
+decode table or a regex DFA is a deep multiplexer tree where silicon would
+infer block RAM. `Design::rom` documents the cost instead of hiding it.
+
+**The clock is the module's property, and the simulator now takes it as one.**
+`Sim::new` still infers a clock from the first register it finds, which is
+wrong for a design whose only state is a memory: no register means no clock, and
+a memory's write happens at the edge, so the write never happens. The cosimulator
+found that — the simulator said zero and Verilator said the real value, on the
+same stimulus — and it is fixed there with `Sim::new_with_clock` and the plan's
+clock. The front end still has no way to *say* which input is the clock, which
+is the remaining half of it.
+
+**The tri-state lives in the wrapper, not in the IR.** A Tiny Tapeout
+bidirectional pad is three signals — read, drive, and a one-bit output enable —
+and the wrapper builds them from a core's separate in, out and enable ports. The
+IR has no `inout` and no open-drain, which is fine for a pad and not fine for
+I2C's open-drain clock line inside the design itself. That is a real gap for the
+protocol engine, and it is not the same gap as the pad.
 
 `blake3.rs` and `fft.rs` are placeholder files that are not even declared as
 modules, so nothing compiles them and no test refers to them. Everything else in

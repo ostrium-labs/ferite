@@ -110,7 +110,16 @@ pub fn simulate(
     plan: &Plan,
     stimulus: &Stimulus,
 ) -> Result<Vec<Vec<ferrite_lithic_bits::Bits>>, Error> {
-    let mut sim = Sim::new(design).map_err(|inner| Error::Sim(Box::new(inner)))?;
+    // The clock comes from the plan, not from the graph. A design whose only
+    // state is a memory has no register for the simulator to infer a clock
+    // from, and a memory's write happens *at* the edge — so without a stated
+    // clock the write never happens and the design reads as though the memory
+    // were empty. The plan knows which port is the clock; the graph does not.
+    let clock = plan.clock_id(design)?;
+    let ports = design.input_ports();
+    let clock_signal = clock.and_then(|id| ports.iter().find(|signal| signal.id() == id));
+    let mut sim =
+        Sim::new_with_clock(design, clock_signal).map_err(|inner| Error::Sim(Box::new(inner)))?;
     let mut cycles = Vec::with_capacity(stimulus.cycles());
     for cycle in 0..stimulus.cycles() as u64 {
         let Some(inputs) = stimulus.cycle(cycle) else {

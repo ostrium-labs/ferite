@@ -32,7 +32,7 @@ use std::process::Command;
 
 use ferrite_lithic::{Design, Signal};
 use ferrite_lithic_bits::Bits;
-use ferrite_lithic_rtl::{Module, PortNames};
+use ferrite_lithic_rtl::Module;
 
 /// Whether a Verilog parser is available to check against.
 fn iverilog() -> Option<PathBuf> {
@@ -142,6 +142,26 @@ fn designs() -> Vec<(String, Vec<(String, String)>)> {
     out.push((
         "accumulator".to_string(),
         vec![("top".to_string(), accumulator.emit().unwrap())],
+    ));
+
+    // A memory with a read latency: the read port is a register, driven by an
+    // `always` block, and a net driven by an `always` block has to be declared
+    // as one. This design is here because that is a declaration the emitter
+    // has to get right, and a wrong one is text that does not elaborate.
+    let sync_read = stateful(
+        |d, _| {
+            let addr = d.input("addr", 4).unwrap();
+            let data = d.input("data", 8).unwrap();
+            let we = d.input("we", 1).unwrap();
+            let mem = d.mem_with(8, 16, None, 1).unwrap();
+            d.write_port(&mem, &data, &addr, &we).unwrap();
+            d.read_port(&mem, &addr, &we).unwrap()
+        },
+        "sync_read",
+    );
+    out.push((
+        "sync_read".to_string(),
+        vec![("top".to_string(), sync_read.emit().unwrap())],
     ));
 
     // Reset tied high: the branch is kept, because a register that is permanently
@@ -256,15 +276,26 @@ fn designs() -> Vec<(String, Vec<(String, String)>)> {
         |d| {
             let a = d.input("a", 8).unwrap();
             let depth = Bits::constant(16, 32).unwrap();
-            d.instance("sub", &[("DEPTH", depth)], std::slice::from_ref(&a), 8)
-                .unwrap()
+            let q = d.wire(8).unwrap();
+            let sub = d
+                .blackbox(
+                    "sub",
+                    &[("DEPTH", depth)],
+                    &[
+                        ferrite_lithic::BlackboxPort::input("i0", &a),
+                        ferrite_lithic::BlackboxPort::output("o0", &q),
+                    ],
+                )
+                .unwrap();
+            d.output("q", 8, sub.output("o0").unwrap()).unwrap();
+            q
         },
         "params",
     );
     // The submodule is hand-written rather than emitted, which makes it a check on
-    // the instantiation syntax: `.DEPTH` must match a 32-bit parameter, and `.i0`
-    // and `.o0` must be the names a positional submodule actually declares. If the
-    // emitter renumbered either side, this stops elaborating.
+    // the instantiation syntax: `.DEPTH` must match a 32-bit parameter, and `i0`
+    // and `o0` must be the names the submodule actually declares. If the emitter
+    // renamed either side, this stops elaborating.
     let stub = r#"// A hand-written stand-in for the emitted submodule.
 module sub #(
   parameter [31:0] DEPTH = 32'd1
@@ -286,27 +317,63 @@ endmodule
 
     // A parent and the child it instantiates, elaborated together.
     //
-    // The child is emitted with positional port names, and the clock is the first
-    // input it was given, so the clock is `i0`. That is the whole of the hierarchy
-    // convention: port order *is* the ABI, and a parent passes the child's clock as
-    // the first input because the instantiation site has nowhere else to put it.
-    let child = stateful(
-        |d, clk| {
-            let data = d.input("d", 8).unwrap();
-            let clear = d.input("clear", 1).unwrap();
-            d.reg(&data, clk, &d.constant(false), &clear).unwrap()
-        },
+    // The child is emitted with its port names, and the parent binds to those
+    // names. That is the whole of the hierarchy convention: a port's *name* is
+    // the ABI, and an instantiation site connects to it by name.
+    //
+    // The child is built by hand rather than by the `stateful` helper, because
+    // the helper names the child's output `out` and the parent would then have an
+    // output port of the same name, which is one name twice.
+    let child_design = Design::new();
+    let child_clk = child_design.input("clk", 1).unwrap();
+    let child_data = child_design.input("d", 8).unwrap();
+    let child_clear = child_design.input("clear", 1).unwrap();
+    let child_out = child_design
+        .reg(
+            &child_data,
+            &child_clk,
+            &child_design.constant(false),
+            &child_clear,
+        )
+        .unwrap();
+    child_design.output("q", 8, &child_out).unwrap();
+    let child = Module::new(
         "child",
+        child_design.build().unwrap(),
+        child_clk.id(),
+        child_design.input_ports().iter().map(|s| s.id()).collect(),
+        child_design.output_ports().iter().map(|s| s.id()).collect(),
     );
-    let child = Module::with_port_names(child, PortNames::Positional);
-    let parent = combinational(
-        |d| {
-            let clk = d.input("clk", 1).unwrap();
-            let data = d.input("d", 8).unwrap();
-            let clear = d.input("clear", 1).unwrap();
-            d.instance("child", &[], &[clk, data, clear], 8).unwrap()
-        },
+
+    let parent_design = Design::new();
+    let pclk = parent_design.input("clk", 1).unwrap();
+    let pdata = parent_design.input("d", 8).unwrap();
+    let pclear = parent_design.input("clear", 1).unwrap();
+    let pq = parent_design.wire(8).unwrap();
+    let sub = parent_design
+        .blackbox(
+            "child",
+            &[],
+            &[
+                ferrite_lithic::BlackboxPort::input("clk", &pclk),
+                ferrite_lithic::BlackboxPort::input("d", &pdata),
+                ferrite_lithic::BlackboxPort::input("clear", &pclear),
+                ferrite_lithic::BlackboxPort::output("q", &pq),
+            ],
+        )
+        .unwrap();
+    parent_design
+        .output("q", 8, sub.output("q").unwrap())
+        .unwrap();
+    let parent = Module::combinational(
         "parent",
+        parent_design.build().unwrap(),
+        parent_design.input_ports().iter().map(|s| s.id()).collect(),
+        parent_design
+            .output_ports()
+            .iter()
+            .map(|s| s.id())
+            .collect(),
     );
     out.push((
         "hierarchy".to_string(),

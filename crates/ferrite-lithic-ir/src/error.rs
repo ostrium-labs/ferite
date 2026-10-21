@@ -359,6 +359,76 @@ pub enum Error {
         op: Op,
     },
 
+    /// An instance port was given an empty name.
+    EmptyPortName {
+        /// The operation that requested it.
+        op: Op,
+    },
+
+    /// Two ports of one instance had the same name.
+    DuplicatePortName {
+        /// The operation that requested it.
+        op: Op,
+        /// The name that appeared twice.
+        name: String,
+    },
+
+    /// An instance port's recorded width did not match the signal on this side.
+    PortWidthMismatch {
+        /// The operation that requested it.
+        op: Op,
+        /// The port's name.
+        port: String,
+        /// The width the port was declared with.
+        expected: u32,
+        /// The width the signal actually has.
+        found: u32,
+    },
+
+    /// An instance wanted to drive a wire that something else already drives.
+    PortAlreadyDriven {
+        /// The operation that requested it.
+        op: Op,
+        /// The port's name.
+        port: String,
+        /// The wire in question.
+        signal: NodeId,
+    },
+
+    /// A memory's initial image was longer than the memory is deep.
+    MemoryContentsTooLong {
+        /// The memory's depth.
+        depth: u32,
+        /// How many words the image had.
+        words: usize,
+    },
+
+    /// A word of a memory's initial image was the wrong width.
+    MemoryContentsWidthMismatch {
+        /// Which word of the image.
+        word: usize,
+        /// The memory's word width.
+        expected: u32,
+        /// The width the word had.
+        found: u32,
+    },
+
+    /// A memory was given a second macro form.
+    MemoryAlreadyHasMacro {
+        /// The memory in question.
+        mem: NodeId,
+    },
+
+    /// A macro's read latency disagreed with the memory's.
+    MacroReadLatencyMismatch {
+        /// The memory in question.
+        mem: NodeId,
+        /// The memory's read latency.
+        memory: u32,
+        /// The macro's read latency.
+        macro_latency: u32,
+    },
+
     /// A `case` was built with no arms.
     CaseNoArms {
         /// The case node's own id is not known here — the case does not exist
@@ -606,6 +676,76 @@ impl fmt::Display for Error {
                 "an `{op}` needs a non-empty name, because the name becomes the \
                  instance identifier in the generated Verilog. Give it the name of \
                  the module you are instantiating, e.g. `my_submodule`."
+            ),
+            Error::EmptyPortName { op } => write!(
+                f,
+                "an `{op}` port needs a non-empty name, because the name is the \
+                 connection: it becomes `.name(signal)` in the generated Verilog, and \
+                 it is how a module written outside this project is bound."
+            ),
+            Error::DuplicatePortName { op, name } => write!(
+                f,
+                "an `{op}` has two ports named `{name}`. A module has one port per \
+                 name, so binding both would connect two signals to one port — \
+                 which Verilog accepts and which means something nobody wrote. \
+                 Give each port the name the module uses for it."
+            ),
+            Error::PortWidthMismatch {
+                op,
+                port,
+                expected,
+                found,
+            } => write!(
+                f,
+                "an `{op}` port `{port}` is declared {expected} bits wide but the \
+                 signal on this side is {found} bits. The port's width is the width \
+                 the module expects, so resize the signal to match, or declare the \
+                 port with the width the signal actually has."
+            ),
+            Error::PortAlreadyDriven { op, port, signal } => write!(
+                f,
+                "an `{op}` port `{port}` wants to drive {signal}, but that wire \
+                 already has a driver. A net with two drivers is a short, and \
+                 nothing downstream would report it: the Verilog would elaborate \
+                 and the simulation would produce a value nobody wrote. Use a \
+                 fresh wire for the port."
+            ),
+            Error::MemoryContentsTooLong { depth, words } => write!(
+                f,
+                "a memory {depth} words deep was given an initial image of {words} \
+                 words. The image is the memory's contents in address order, so it \
+                 cannot be longer than the memory. Either shorten the image or make \
+                 the memory deeper."
+            ),
+            Error::MemoryContentsWidthMismatch {
+                word,
+                expected,
+                found,
+            } => write!(
+                f,
+                "word {word} of a memory's initial image is {found} bits wide, but \
+                 the memory's word width is {expected} bits. Every word of the image \
+                 is one memory word, so they must be the same width."
+            ),
+            Error::MemoryAlreadyHasMacro { mem } => write!(
+                f,
+                "the memory {mem} already has a macro form. A memory is built one \
+                 way: as an array of flip-flops, or as a foundry macro, and \
+                 choosing twice would leave the emitter with two descriptions of \
+                 the same circuit."
+            ),
+            Error::MacroReadLatencyMismatch {
+                mem,
+                memory,
+                macro_latency,
+            } => write!(
+                f,
+                "the memory {mem} has a read latency of {memory} cycle(s) but the \
+                 macro says {macro_latency}. The two must agree: the latency is \
+                 when the data arrives, and if the simulator and the macro \
+                 disagreed about that, the design that was simulated would not be \
+                 the design that was fabricated. Give the macro the same latency as \
+                 the memory, or give the memory the macro's."
             ),
             Error::NotAWire { target, kind } => write!(
                 f,

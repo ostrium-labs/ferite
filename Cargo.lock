@@ -298,6 +298,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferrite-lithic-chip"
+version = "0.0.1"
+dependencies = [
+ "ferrite-lithic",
+ "ferrite-lithic-bits",
+ "ferrite-lithic-ir",
+ "ferrite-lithic-pdk",
+ "ferrite-lithic-rtl",
+ "ferrite-lithic-sim",
+]
+
+[[package]]
 name = "ferrite-lithic-corpus"
 version = "0.0.1"
 dependencies = [
@@ -365,6 +377,10 @@ dependencies = [
  "ferrite-lithic-bits",
  "proptest",
 ]
+
+[[package]]
+name = "ferrite-lithic-pdk"
+version = "0.0.1"
 
 [[package]]
 name = "ferrite-lithic-rtl"

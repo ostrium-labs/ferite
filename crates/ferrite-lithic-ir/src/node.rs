@@ -32,6 +32,107 @@ impl WritePort {
     }
 }
 
+/// Which way an instance's port points.
+///
+/// A port is an input when the design drives it and the module reads it, and an
+/// output when the module drives it and the design reads it. The distinction is
+/// not cosmetic: an input port's signal is an *operand* of the instance, and an
+/// output port's signal is a *net the instance drives*.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PortDirection {
+    /// Driven from inside the design, read by the module.
+    Input,
+    /// Driven by the module, read inside the design.
+    Output,
+}
+
+/// A named connection to one port of an instance.
+///
+/// # Why names, and why the A1 positional scheme is gone
+///
+/// The A1 scheme bound a submodule positionally: `.i0`, `.i1`, …, `.o0`, because
+/// the graph had nowhere to put a port's *name*. That was a workaround for a
+/// limit, not a design position, and it cannot express the thing the competition
+/// chip actually needs: a blackbox. A hard SRAM macro has seventeen ports with
+/// names the foundry chose (`A_CLK`, `A_MEN`, `A_WEN`, `A_REN`, `A_ADDR`,
+/// `A_DIN`, `A_DLY`, `A_DOUT`, `A_BM`, and eight `A_BIST_*` pins), and a RISC-V
+/// core has twenty-odd outputs. Neither can be bound positionally to something
+/// this project did not write.
+///
+/// So an instance's ports are named, and the name is the connection. A port
+/// bound by name is also checkable: the width recorded here is the width the
+/// emitter will connect, and a macro whose `A_ADDR` is ten bits wide cannot be
+/// silently bound to a four-bit address.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InstancePort {
+    /// The port's name, as the module spells it.
+    pub name: String,
+    /// Which way the port points.
+    pub direction: PortDirection,
+    /// The signal on this side of the connection.
+    ///
+    /// For an input, the signal the module reads. For an output, the net the
+    /// module drives — which must be an undriven wire when the instance is
+    /// built.
+    pub signal: NodeId,
+    /// The port's width in bits.
+    pub width: u32,
+}
+
+impl InstancePort {
+    /// A port the design drives and the module reads.
+    #[must_use]
+    pub fn input(name: impl Into<String>, signal: NodeId, width: u32) -> Self {
+        Self {
+            name: name.into(),
+            direction: PortDirection::Input,
+            signal,
+            width,
+        }
+    }
+
+    /// A port the module drives and the design reads.
+    #[must_use]
+    pub fn output(name: impl Into<String>, signal: NodeId, width: u32) -> Self {
+        Self {
+            name: name.into(),
+            direction: PortDirection::Output,
+            signal,
+            width,
+        }
+    }
+}
+
+/// How to build a memory out of a hard macro instead of an array of flip-flops.
+///
+/// # Why this is a property of the memory and not of the emitter
+///
+/// A hard macro is not a different *circuit*; it is a different *implementation*
+/// of the same circuit, chosen by the process. The simulator has to model the
+/// memory, the emitter has to build it, and the two must agree about the read
+/// latency, the enable behaviour and the contents — otherwise the design that
+/// is simulated is not the design that is fabricated.
+///
+/// Putting the macro's shape on the memory node means the shape travels with
+/// the memory, and the emitter's choice is a lowering rather than a second
+/// description of the design.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MemMacro {
+    /// The macro's module name, as the foundry spells it.
+    pub module: String,
+    /// Compile-time parameters, as literals.
+    pub params: Vec<(String, Bits)>,
+    /// The macro's port connections.
+    pub ports: Vec<InstancePort>,
+    /// How many clock cycles the macro's read takes.
+    ///
+    /// The macro says so, and the memory says so, and they must agree: a
+    /// simulator that says the data arrives in one cycle and a macro that says
+    /// two would make the two backends disagree about the design rather than
+    /// about the implementation.
+    pub read_latency: u32,
+}
+
 /// One arm of a `case`: a set of match values and the value they select.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CaseArm {
@@ -335,6 +436,25 @@ pub enum Node {
     },
 
     /// A memory. Holds its write ports; reads are separate read-port nodes.
+    ///
+    /// # A memory has three more properties than its shape
+    ///
+    /// The A1 memory was a shape and nothing else: a width, a depth and some
+    /// write ports, starting as all zeros. Three things the competition chip
+    /// needs are not shape.
+    ///
+    /// - **Contents.** A firmware image is not zeros, and neither is a protocol
+    ///   lookup table. [`initial`](Self::Mem) holds them. The simulator seeds
+    ///   the memory with them and the emitter writes them into the array, so
+    ///   both backends start from the same state.
+    /// - **Read latency.** An array read is combinational; a hard SRAM macro's
+    ///   output register is not. [`read_latency`](Self::Mem) says how many cycles
+    ///   a read takes, and it is the *memory's* property rather than the
+    ///   backend's, because a design that reads an SRAM and a design that reads
+    ///   an array must be the same design.
+    /// - **A macro form.** [`macro_form`](Self::Mem) says how to build this
+    ///   memory out of a foundry macro instead of flip-flops, when the target
+    ///   process has one.
     Mem {
         /// Word width, in bits.
         data_width: u32,
@@ -342,6 +462,21 @@ pub enum Node {
         depth: u32,
         /// The write ports.
         write_ports: Vec<WritePort>,
+        /// The contents the memory starts with, in address order.
+        ///
+        /// `None` means "starts as all zeros", which is what a memory with no
+        /// image has always meant. `Some` with fewer words than the depth is
+        /// allowed: the words not listed are zero.
+        initial: Option<Vec<Bits>>,
+        /// How many clock cycles a read takes.
+        ///
+        /// Zero is an array read: the data is available in the same cycle as
+        /// the address. One is a synchronous read: the data is captured at the
+        /// clock edge and available in the next cycle, which is what every hard
+        /// SRAM macro on the competition's process does.
+        read_latency: u32,
+        /// How to build this memory out of a hard macro, if the target has one.
+        macro_form: Option<MemMacro>,
     },
 
     /// An asynchronous read port. Combinational: it holds no state.
@@ -356,23 +491,26 @@ pub enum Node {
         data_width: u32,
     },
 
-    /// An instance of a named submodule, producing one output.
+    /// An instance of a named module.
     ///
-    /// **Single output is an A1 limitation, not a design position.** A submodule
-    /// that returns several signals needs a bundle type, and the bundle design is
-    /// not settled. One output is enough to make the node kind real, and it is
-    /// what makes the three dependency relations genuinely distinct — `Inst` is
-    /// the only kind the loop-checking and simulation-scheduling relations
-    /// disagree about.
+    /// The instance is a *statement*, not a value: its outputs are separate wire
+    /// nodes that it drives, and the design reads those. A1 made the instance
+    /// node itself the output, which works for a one-output submodule and does
+    /// not work for a blackbox at all — a hard SRAM macro has one output and
+    /// seventeen inputs, and a RISC-V core has twenty-odd outputs.
+    ///
+    /// The instance's ports are named, and the names are the module's own. See
+    /// [`InstancePort`] for why the positional scheme was replaced rather than
+    /// kept alongside.
     Instance {
-        /// The submodule's name, as it will appear in emitted Verilog.
+        /// The module's name, as it will appear in emitted Verilog.
         name: String,
         /// Compile-time parameters, as literals.
         params: Vec<(String, Bits)>,
-        /// The instance's inputs.
-        inputs: Vec<NodeId>,
-        /// The width of the single output.
-        output_width: u32,
+        /// The port connections, in the order they were declared.
+        ///
+        /// The order is the emission order, so the emitted Verilog is stable.
+        ports: Vec<InstancePort>,
     },
 }
 
@@ -391,12 +529,12 @@ impl Node {
     pub fn width(&self, circuit: &crate::Circuit) -> u32 {
         match self {
             Node::Constant { value } => value.width(),
-            Node::Wire { width, .. }
-            | Node::Case { width, .. }
-            | Node::Instance {
-                output_width: width,
-                ..
-            } => *width,
+            Node::Wire { width, .. } | Node::Case { width, .. } => *width,
+            // An instance is a statement, not a value: its outputs are separate
+            // wire nodes that it drives, so there is no single width to report.
+            // Zero is the honest answer, and a caller that wants an output
+            // should ask for the port rather than for the instance.
+            Node::Instance { .. } => 0,
             Node::Not { arg } => circuit.width_of(*arg),
             Node::Select { len, .. } => *len,
             Node::BitAnd { left, .. }
@@ -563,9 +701,14 @@ impl Node {
                 enable,
                 ..
             } => remap!(mem, address, enable),
-            Node::Instance { inputs, .. } => {
-                for input in inputs.iter_mut() {
-                    *input = f(*input);
+            Node::Instance { ports, .. } => {
+                // *Every* port is remapped here, not only the inputs. An output
+                // port's signal is a wire the instance drives, so if a rewrite
+                // replaces that wire the instance has to drive the replacement
+                // instead — otherwise the rewritten graph has an undriven net
+                // and the original still driven.
+                for port in ports.iter_mut() {
+                    port.signal = f(port.signal);
                 }
             }
         }
@@ -654,7 +797,18 @@ impl Node {
                 out.push(*address);
                 out.push(*enable);
             }
-            Node::Instance { inputs, .. } => out.extend(inputs.iter().copied()),
+            // Only an *input* port is a dependency. An output port's signal is a
+            // net the instance drives, so the edge runs the other way: the net
+            // depends on the instance, not the instance on the net. Counting it
+            // as an operand would make every instance look like a combinational
+            // loop through its own output.
+            Node::Instance { ports, .. } => {
+                for port in ports.iter() {
+                    if port.direction == PortDirection::Input {
+                        out.push(port.signal);
+                    }
+                }
+            }
         }
     }
 }
@@ -707,7 +861,10 @@ mod tests {
             Node::Mem {
                 data_width: 8,
                 depth: 4,
-                write_ports: Vec::new()
+                write_ports: Vec::new(),
+                initial: None,
+                read_latency: 0,
+                macro_form: None,
             }
             .is_stateful()
         );

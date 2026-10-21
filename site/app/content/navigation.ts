@@ -21,6 +21,8 @@ export const DOC_NAV: DocNavigation[] = [
   { slug: "wave", label: "Waveform data", section: "crates", prerequisite: "sim" },
   { slug: "tb", label: "Step testbenches", section: "crates", prerequisite: "sim" },
   { slug: "cosim", label: "Verilator equivalence", section: "crates", prerequisite: "rtl" },
+  { slug: "pdk", label: "The process", section: "crates", prerequisite: "rtl" },
+  { slug: "chip", label: "The submission boundary", section: "crates", prerequisite: "pdk" },
   { slug: "corpus", label: "The corpus", section: "corpus", prerequisite: "cosim" },
   { slug: "findings", label: "Bugs & findings", section: "corpus", prerequisite: "corpus" },
   { slug: "benchmarks", label: "Measured benchmarks", section: "benchmarks", prerequisite: "corpus" },

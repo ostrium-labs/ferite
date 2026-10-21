@@ -22,6 +22,7 @@ import { CRATES } from "../lib/data";
 import { TOOLCHAIN } from "./toolchain";
 import { CORPUS, FINDINGS } from "./corpus";
 import { MDX_SLUGS } from "./paths";
+import { SUBMISSION } from "./submission";
 import type { ComponentType } from "react";
 
 import type { Page } from "./types";
@@ -123,6 +124,10 @@ const CONTENT: DocEntry[] = [
   fromData(TOOLCHAIN[6], 170), // wave
   fromData(TOOLCHAIN[7], 190), // cosim
   fromData(TOOLCHAIN[8], 180), // tb
+  // The submission boundary, after the toolchain and before the corpus: it is
+  // where the emitter's output stops being Verilog and starts being a chip.
+  fromData(SUBMISSION[0], 190), // pdk
+  fromData(SUBMISSION[1], 195), // chip
   fromData(CORPUS, 200),
   fromData(FINDINGS, 210),
   // Reference, read last: it measures the corpus rather than explaining it.

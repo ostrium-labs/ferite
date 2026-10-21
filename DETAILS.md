@@ -51,6 +51,8 @@ written to be extended if code or vectors are ever derived rather than rewritten
 | `ferrite-lithic-cosim` | Verilator equivalence against `ferrite-lithic-sim` | A2 **done** |
 | `ferrite-lithic-tb` | Step testbenches where every `.await` is one clock edge | A3 **done** |
 | `ferrite-lithic-corpus` | Verified designs that check the toolchain, one per algorithm | — |
+| `ferrite-lithic-pdk` | Process knowledge: tile geometry, flip-flops per tile, and the memory macros with their names, port lists and measured areas | — **new** |
+| `ferrite-lithic-chip` | The Tiny Tapeout submission boundary: the pin budget, the `tt_um_*` wrapper, the `info.yaml`, and a memory on a foundry macro | — **new** |
 
 ### What `ferrite-lithic-bits` actually does
 
@@ -220,7 +222,7 @@ against the source):
 | Flow | `ttihp-verilog-template` branch `cmos5l`, RTL to GDS via LibreLane |
 | Tiles | `info.yaml` = **6x4** = 24 tiles, ~0.7 mm², ~1K logic cells/tile |
 | Registers | ~320 DFF per tile |
-| Instruction memory | **SRAM preferred over flip-flops**, ~11–26 KB |
+| Instruction memory | **SRAM only, and 2–4 KB of it** — see ADR-0023 and §6a below |
 | Deadline | **18 January 2027**; March 2027 shuttle target |
 | Open source | Required; build in public explicitly allowed |
 | Contact | `asic-competition@janestreet.com` |
@@ -246,7 +248,8 @@ The contract already exists in Loams: `loams-stream-grpc`'s `StreamService`, who
 comment already reads *"used by protocol adapters through Dapr invocation"*, including
 the CloudEvents `application/cloudevents-batch+json` path annotated as a Dapr
 pass-through. That JSON path is the firmware target because it avoids both protobuf
-varints and HTTP/2 HPACK, which is what makes it fit 11–26 KB.
+varints and HTTP/2 HPACK — but it fits a *bounded number of events* in the memory
+there is, not a general-purpose CloudEvents stack. See §6a.
 
 **Verification, the differentiator.** A production conformance suite to validate
 against (`loams-meta-conformance`, 4,488 lines). Differential testing of the same
@@ -254,6 +257,135 @@ codec compiled native and on-chip; constrained-random protocol fuzzing; formal s
 properties on the pin/timing ISA; bit-exactness certification of `SIMD` against
 Loams; and AI-assisted vector generation from the `.proto` files, legitimate here
 because each generated vector is checkable against a production implementation.
+
+## 6a. The program memory is 2–4 KB, and that is measured
+
+The plan's first draft budgeted the instruction memory at *11–26 KB*, on the
+strength of *3.7–8.8 Kbit/tile* over 24 tiles. The arithmetic was right and the
+conclusion was wrong by three to six times, in the same direction: 24 tiles is
+the whole die, and the die also holds the CPU, the protocol engine, the clock
+tree and the routing.
+
+The numbers, from the IHP open PDK's own LEF files, in
+`ferrite-lithic-pdk`:
+
+| Macro | Bytes | Area (µm²) | bits/µm² | Bounding box | Tiles |
+|---|---:|---:|---:|---|---:|
+| `RM_IHPSG13_1P_256x8_c3_bm_bist` | 256 | 17 547 | 0.117 | 237 × 75 | 2 |
+| `RM_IHPSG13_1P_512x8_c3_bm_bist` | 512 | 26 138 | 0.157 | 237 × 110 | 2 |
+| `RM_IHPSG13_1P_1024x8_c2_bm_bist` | 1 024 | 49 419 | 0.166 | 147 × 336 | 3 |
+| `RM_IHPSG13_1P_1024x16_c2_bm_bist` | 2 048 | 79 674 | 0.206 | 237 × 336 | 6 |
+| `RM_IHPSG13_1P_1024x32_c2_bm_bist` | 4 096 | 140 183 | 0.234 | 417 × 336 | 9 |
+| `RM_IHPSG13_1P_4096x8_c3_bm_bist` | 4 096 | 146 413 | 0.224 | 237 × 618 | 10 |
+| `RM_IHPSG13_1P_2048x32_c2_bm_bist` | 8 192 | 261 108 | 0.251 | 417 × 627 | 15 |
+| `RM_IHPSG13_1P_8192x32_c4` | 32 768 | 939 915 | 0.279 | 1520 × 618 | **40** |
+
+Three things fall out of it.
+
+**The area is not the cost that matters.** A macro is placed on a tile grid, so
+what it costs is its bounding box. The 1024x8 is 147 µm wide and 336 µm tall,
+which on a 200 × 150 µm tile is one tile wide and **three** tiles tall, whatever
+its 49 419 µm² area says. The most area-efficient macro in the family — the
+8192x32, at 0.279 bits/µm² — has a bounding box of **forty tiles**, more than
+the whole allocation. It is not a candidate for anything.
+
+**Flip-flops are not an alternative.** ~320 DFF per tile over 24 tiles is 7 680
+flip-flops: 7 680 bits, 960 bytes, and that is the *entire* design's register
+budget spent on nothing else. A firmware image in flip-flops is not a trade-off,
+it is impossible.
+
+**Four kilobytes is the realistic ceiling.** If the CPU and the protocol engine
+take twelve to sixteen tiles, eight to twelve remain, and the table says eight
+to twelve tiles is two to four kilobytes.
+
+So the firmware target moves down the ladder the plan already wrote: not a
+CloudEvents *stack*, but a framed link carrying a bounded number of JSON
+events. A single CloudEvent in JSON is two to four hundred bytes, so 4 KB is a
+handful of events. The entry demonstrates the toolchain and the verification,
+with a protocol running in firmware on a chip that has no protocol logic in
+silicon at all — which is a smaller claim than the plan made and a defensible
+one. ADR-0023 has the full argument.
+
+## 6b. The blackbox story, and the submission boundary
+
+The plan's week-1 gate was *"`ferrite-lithic` → CMOS5L → GDS, end to end"* with
+the risk called out as *"our DSL cannot instantiate CMOS5L SRAM macros"*. That
+gate is now open, and it took four things.
+
+**Named instance ports.** ADR-0020. The A1 scheme bound a submodule positionally
+— `.i0`, `.i1`, `.o0` — because the graph had nowhere to put a port's name. That
+was the right answer to the question A1 could ask and the wrong answer to the
+one the competition asks: the IHP SRAM macro has seventeen ports named by the
+foundry, and a RISC-V core has twenty-odd outputs, and **neither can be bound
+positionally to a module this project did not write**. So the ports are named,
+the name is the connection, and the positional scheme was removed rather than
+left as a second way to do the same thing.
+
+Three consequences, each of them a real change:
+
+- An instance is a *statement*, not a value. Its outputs are separate wire nodes
+  that it drives, so a module with several outputs needs no bundle type.
+- Only an **input** port is a dependency. An output port's signal is a net the
+  instance drives, so the edge runs the other way. This was found by the first
+  test of the new scheme: counting an output port as an operand makes every
+  instance look like a combinational loop through its own output.
+- A port's width is checked against the signal on this side, in the IR, so a
+  macro whose `A_ADDR` is ten bits wide cannot be bound to a four-bit address.
+
+**A memory's read latency belongs to the memory.** ADR-0021. An IHP SRAM's read
+is *synchronous*: the enable and the address are sampled at the edge and the
+data arrives in the next cycle. An array read is combinational. A design that
+reads a macro and a design that reads an array are therefore different circuits,
+and the difference is a whole cycle.
+
+There were three ways to handle that and two of them are traps. Substituting the
+macro silently means the circuit the simulator ran is not the circuit that was
+fabricated, and every differential test that used the memory was testing
+something else. Moving the extra register into the design means the two paths
+are two designs. The one that works is to make the latency a property of the
+memory — `Node::Mem { read_latency }` — and have both backends honour it: the
+emitter builds a registered read for an array and the macro provides its own,
+and the simulator models the capture as a register fed by the array read, with
+the enable's complement as the register's *hold*. That last detail is the
+macro's behaviour and not the array's: a disabled synchronous read **holds** the
+last value rather than driving zero, and `Op::ReadPort` grew a `hold` flag
+because of it.
+
+**A macro is a lowering of a memory, not a second kind of circuit.**
+`Node::Mem` carries an optional `macro_form`, and the emitter builds the macro
+*instead of* the array while the simulator still models the memory. The macro
+declares its own read latency and the memory declares one, and the IR refuses a
+mismatch — because the latency is when the data arrives, and two backends
+disagreeing about that is the failure the whole mechanism exists to prevent.
+The address mux, which a single-port macro forces (one address port, a design
+that wants two), is built as ordinary graph nodes so both backends see it.
+
+**The submission boundary is a crate, and the process is not the DSL's
+business.** ADR-0022. `ferrite-lithic-pdk` holds the process knowledge — tile
+geometry, flip-flops per tile, and the macro table above with its names, port
+lists and areas read out of the PDK's own LEF and Verilog files. It depends on
+nothing. `ferrite-lithic-chip` holds the boundary: the pin budget, the
+`tt_um_<user>_<project>` wrapper, the `info.yaml`, the documentation page, and
+`sram::macro_memory`.
+
+The wrapper does three things the design must not:
+
+1. **It inverts the reset.** The die's `rst_n` is active low; the DSL's register
+   reset is active high and synchronous. The inversion belongs at the boundary,
+   so the design is written in one polarity and cannot get it wrong in three
+   places.
+2. **It ties off the unused pads.** An undriven output pad is an `x` in
+   simulation and a warning in every tool downstream.
+3. **It turns a bidirectional pad into three signals.** `uio_in` is what the pad
+   reads, `uio_out` is what the design wants to drive, and `uio_oe` says whether
+   to drive it. The enable is not decoration: an I2C master has to release the
+   clock line and let the slave pull it low, and only a tri-state pad can do
+   that.
+
+The pin budget is checked, and the check is a static error: eight dedicated
+inputs, eight dedicated outputs, eight bidirectional pins, and the clock, the
+reset and the power enable are the die's. A design that wants twenty-five user
+pins does not fit, and the error says so by name.
 
 ## 7. The Loams core, honestly
 
@@ -648,25 +780,49 @@ canonical accumulator ties `clear` high, which means it holds forever and never
 accumulates — correct per the truth table, wrong for an example that calls itself an
 accumulator. The emitted `if (1'h1) q <= q;` made it impossible to miss.
 
-### The instance ABI had to be invented, because the IR has nowhere to put it
+### The instance ABI is the port's name, because a blackbox has no other kind
 
-`Node::Instance` records a submodule's name, its parameters and its inputs' order.
-It does not record the names of the submodule's ports, because the graph has no
-field for them. So an instantiation site cannot name what it connects to, and a
-submodule emitted with its own design's names cannot be bound by one. Rather than
-guess at names, the ABI is positional — `.i0`, `.i1`, …, `.o0` — and
-`PortNames::Positional` emits a submodule under exactly those names, reserving them
-before any user name so a signal called `i0` is renamed rather than shadowing a
-port. The reference's packed-output vector degenerates to the single output we have
-and becomes visible again when instances grow bundles.
+`Node::Instance` records a module's name, its parameters, and a list of named port
+connections. The A1 scheme was positional — `.i0`, `.i1`, …, `.o0` — because the
+graph had nowhere to put a port's name, and it was a reasonable answer to the
+question A1 could ask: *how does a one-output submodule get bound?*
 
-### Six refusals, and the two the reference never has to make
+It is the wrong answer to the question the competition chip asks: *how does a
+foundry SRAM macro get bound?* The IHP macro has seventeen ports with names the
+foundry chose (`A_CLK`, `A_MEN`, `A_WEN`, `A_REN`, `A_ADDR`, `A_DIN`, `A_DLY`,
+`A_DOUT`, `A_BM`, and eight `A_BIST_*` pins), and a RISC-V core has twenty-odd
+outputs. Neither can be bound positionally to a module this project did not write,
+and a positional binding to a module it *did* write is a guess about an interface
+that a name states exactly.
+
+So the ports are named, the name is the connection, and the positional scheme was
+removed rather than kept alongside: two ways to bind an instance is two ways for
+them to disagree. The reference's packed-output vector becomes a list of named
+output ports, and the bundle type it wanted is not needed — a name says what the
+signal is, which is more than a position ever did.
+
+Three things followed from the change and are worth writing down:
+
+- **An instance is a statement, not a value.** Its outputs are separate wire
+  nodes that it drives, so a module with several outputs needs no bundle type.
+- **Only an input port is a dependency.** An output port's signal is a net the
+  instance drives, so the edge runs the other way. Counting it as an operand
+  made every instance look like a combinational loop through its own output —
+  which is exactly what the first test of the new scheme found.
+- **A port's width is checked against the signal on this side.** A macro whose
+  `A_ADDR` is ten bits wide cannot be silently bound to a four-bit address.
+
+### Seven refusals, and the two the reference never has to make
 
 A literal clock, a second clock domain, a stateful module with no clock, a whole
-memory used as a value, a port in both directions, and a port with no name. The last
-two are cases the reference never meets because it never has to describe a module
-from outside, and the first three are cases where a plausible-looking line of
-Verilog would compile and mean a different circuit.
+memory used as a value, a port in both directions, a port with no name, and a read
+latency the emitter cannot build. The last two are cases the reference never meets
+because it never has to describe a module from outside, and the first three are
+cases where a plausible-looking line of Verilog would compile and mean a different
+circuit. The seventh is new: a memory with a read latency of two or more would
+need a pipeline of registers whose depth the emitter would have to invent, and
+inventing it would be a guess about the design — so the design says how many
+cycles it waits, out of registers, and the emitter is told.
 
 Module dedup is the one place the crate is weaker than the reference, and it is
 weaker for a knowable reason: the reference interns definitions in a table and can

@@ -127,6 +127,9 @@ mod tests {
             data_width: 8,
             depth: 4,
             write_ports: Vec::new(),
+            initial: None,
+            read_latency: 0,
+            macro_form: None,
         }
     }
 
@@ -134,8 +137,7 @@ mod tests {
         Node::Instance {
             name: "sub".to_string(),
             params: Vec::new(),
-            inputs: vec![NodeId::from_index(0)],
-            output_width: 8,
+            ports: vec![crate::InstancePort::input("a", NodeId::from_index(0), 8)],
         }
     }
 
@@ -216,6 +218,9 @@ mod tests {
                 address: NodeId::from_index(1),
                 enable: NodeId::from_index(2),
             }],
+            initial: None,
+            read_latency: 0,
+            macro_form: None,
         };
         assert!(!Deps::LoopChecking.is_followed(&m));
         assert!(!Deps::SimulationScheduling.is_followed(&m));

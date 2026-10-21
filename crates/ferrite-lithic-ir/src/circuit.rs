@@ -9,7 +9,9 @@ use ferrite_lithic_bits::Bits;
 use crate::deps::Deps;
 use crate::error::{Error, Op, Relation};
 use crate::id::NodeId;
-use crate::node::{CaseArm, Node, WritePort, address_width_for_depth};
+use crate::node::{
+    CaseArm, InstancePort, MemMacro, Node, PortDirection, WritePort, address_width_for_depth,
+};
 
 /// A signal graph.
 ///
@@ -537,21 +539,106 @@ impl Circuit {
     /// design, and making the reset value explicit would put a reset port on every
     /// memory for no benefit.
     ///
+    /// A memory with *contents* — a firmware image, a protocol lookup table —
+    /// is [`mem_with`](Self::mem_with) with an initial image, and a memory with
+    /// a read latency is the same call with a latency.
+    ///
     /// # Errors
     ///
     /// If either width or depth is zero.
     pub fn mem(&mut self, data_width: u32, depth: u32) -> Result<NodeId, Error> {
+        self.mem_with(data_width, depth, None, 0)
+    }
+
+    /// A memory with an optional initial image and an optional read latency.
+    ///
+    /// # Errors
+    ///
+    /// - If either width or depth is zero.
+    /// - [`Error::MemoryContentsTooLong`] if the image is longer than the memory.
+    /// - [`Error::MemoryContentsWidthMismatch`] if a word's width is not the
+    ///   memory's word width.
+    pub fn mem_with(
+        &mut self,
+        data_width: u32,
+        depth: u32,
+        initial: Option<Vec<Bits>>,
+        read_latency: u32,
+    ) -> Result<NodeId, Error> {
         if data_width == 0 {
             return Err(Error::ZeroWidth { op: Op::Mem });
         }
         if depth == 0 {
             return Err(Error::ZeroWidth { op: Op::Mem });
         }
+        if let Some(contents) = &initial {
+            if contents.len() > depth as usize {
+                return Err(Error::MemoryContentsTooLong {
+                    depth,
+                    words: contents.len(),
+                });
+            }
+            for (index, word) in contents.iter().enumerate() {
+                if word.width() != data_width {
+                    return Err(Error::MemoryContentsWidthMismatch {
+                        word: index,
+                        expected: data_width,
+                        found: word.width(),
+                    });
+                }
+            }
+        }
         Ok(self.push(Node::Mem {
             data_width,
             depth,
             write_ports: Vec::new(),
+            initial,
+            read_latency,
+            macro_form: None,
         }))
+    }
+
+    /// Attach a hard-macro form to a memory.
+    ///
+    /// The macro is how the memory is *built*, not what it *is*: the simulator
+    /// still models the memory, and the emitter builds the macro instead of an
+    /// array of flip-flops. The macro's read latency must agree with the
+    /// memory's, or the two backends would disagree about when the data
+    /// arrives — which is the one thing a memory's latency exists to say.
+    ///
+    /// # Errors
+    ///
+    /// - If `mem` is not a memory.
+    /// - [`Error::EmptyInstanceName`] if the macro's module name is empty.
+    /// - [`Error::MacroReadLatencyMismatch`] if the macro's latency differs from
+    ///   the memory's.
+    pub fn set_mem_macro(&mut self, mem: NodeId, macro_form: MemMacro) -> Result<(), Error> {
+        if macro_form.module.is_empty() {
+            return Err(Error::EmptyInstanceName { op: Op::Mem });
+        }
+        let Node::Mem {
+            read_latency,
+            macro_form: existing,
+            ..
+        } = &mut self.nodes[mem.index()]
+        else {
+            return Err(Error::NotAMemory {
+                target: mem,
+                kind: self.get(mem)?.kind(),
+            });
+        };
+        if existing.is_some() {
+            return Err(Error::MemoryAlreadyHasMacro { mem });
+        }
+        if macro_form.read_latency != *read_latency {
+            return Err(Error::MacroReadLatencyMismatch {
+                mem,
+                memory: *read_latency,
+                macro_latency: macro_form.read_latency,
+            });
+        }
+        *existing = Some(macro_form);
+        Ok(())
     }
 
     /// Add a write port to a memory.
@@ -656,33 +743,92 @@ impl Circuit {
         }))
     }
 
-    /// An instance of a named submodule, producing one output of `output_width`.
+    /// An instance of a named module.
     ///
-    /// See [`Node::Instance`] for why one output, not a bundle.
+    /// The module's ports are named, and the names are the module's own. See
+    /// [`InstancePort`] for why the A1 positional scheme was replaced rather
+    /// than kept alongside.
+    ///
+    /// # What is checked
+    ///
+    /// - The module name is not empty.
+    /// - Every port name is not empty, and no two ports share a name. A
+    ///   duplicate would emit two connections to one port, which Verilog
+    ///   accepts and which means something nobody wrote.
+    /// - An output port's signal is a **wire with no driver**. The instance
+    ///   drives it, and a net with two drivers is a short that no error in this
+    ///   crate would ever report.
+    /// - A port's recorded width is the width of the signal on this side.
     ///
     /// # Errors
     ///
-    /// If `output_width` is zero, or the name is empty.
+    /// [`Error::EmptyInstanceName`], [`Error::EmptyPortName`],
+    /// [`Error::DuplicatePortName`], [`Error::NotAWire`],
+    /// [`Error::PortAlreadyDriven`] or [`Error::PortWidthMismatch`].
     pub fn instance(
         &mut self,
         name: impl Into<String>,
         params: Vec<(String, Bits)>,
-        inputs: Vec<NodeId>,
-        output_width: u32,
+        ports: Vec<InstancePort>,
     ) -> Result<NodeId, Error> {
         let name = name.into();
-        if output_width == 0 {
-            return Err(Error::ZeroWidth { op: Op::Instance });
-        }
         if name.is_empty() {
             return Err(Error::EmptyInstanceName { op: Op::Instance });
         }
-        Ok(self.push(Node::Instance {
+        let mut seen: BTreeMap<&str, ()> = BTreeMap::new();
+        for port in &ports {
+            if port.name.is_empty() {
+                return Err(Error::EmptyPortName { op: Op::Instance });
+            }
+            if seen.insert(port.name.as_str(), ()).is_some() {
+                return Err(Error::DuplicatePortName {
+                    op: Op::Instance,
+                    name: port.name.clone(),
+                });
+            }
+            if self.width_of(port.signal) != port.width {
+                return Err(Error::PortWidthMismatch {
+                    op: Op::Instance,
+                    port: port.name.clone(),
+                    expected: port.width,
+                    found: self.width_of(port.signal),
+                });
+            }
+            if port.direction == PortDirection::Output {
+                let Node::Wire { driver, .. } = self.get(port.signal)? else {
+                    return Err(Error::NotAWire {
+                        target: port.signal,
+                        kind: self.get(port.signal)?.kind(),
+                    });
+                };
+                if driver.get().is_some() {
+                    return Err(Error::PortAlreadyDriven {
+                        op: Op::Instance,
+                        port: port.name.clone(),
+                        signal: port.signal,
+                    });
+                }
+            }
+        }
+        let id = self.push(Node::Instance {
             name,
             params,
-            inputs,
-            output_width,
-        }))
+            ports: ports.clone(),
+        });
+        // The instance drives its output ports, so each of those wires now has
+        // a driver. Recording it here is what makes the instance reachable from
+        // the wire the design reads, and what stops `check` from reporting the
+        // wire as undriven.
+        for port in &ports {
+            if port.direction != PortDirection::Output {
+                continue;
+            }
+            let Node::Wire { driver, .. } = &mut self.nodes[port.signal.index()] else {
+                unreachable!("checked above")
+            };
+            driver.set(Some(id));
+        }
+        Ok(id)
     }
 
     // -------------------------------------------------------------------- naming

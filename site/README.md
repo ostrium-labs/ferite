@@ -6,7 +6,7 @@ in Rust, with a corpus of twenty-one real algorithms that are each checked three
 ## What it is
 
 A [React Router 8](https://reactrouter.com) app in framework mode, with
-[`fumadocs-mdx`](https://fumadocs.dev) as the content layer. Three route patterns own sixteen
+[`fumadocs-mdx`](https://fumadocs.dev) as the content layer. Three route patterns own eighteen
 documentation pages plus the landing page.
 
 ```
@@ -81,6 +81,11 @@ builds on pushes to the production branch. The token needs permission to edit Wo
 in the target account; read-only access cannot create the Worker or its build connection.
 
 For a local preview or authenticated manual deployment:
+`verify.mjs` drives a real browser over every route and asserts the things that are easy to
+break silently: that each page renders content, that the sidebar marks the current page,
+that the prev/next chain reaches all eighteen pages, that Shiki actually ran on the MDX
+pages, that the hero timing diagram draws once and then holds, that the scrolling demos
+animate only while on screen, and that both typefaces are applied.
 
 ```sh
 npm ci

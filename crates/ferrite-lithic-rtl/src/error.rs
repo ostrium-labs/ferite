@@ -29,10 +29,10 @@ pub enum Error {
     EmptyModuleName,
     /// A port wire has no name.
     ///
-    /// Under [`PortNames::Wire`](crate::PortNames::Wire) a port's identifier *is*
-    /// its name, so an unnamed port cannot be emitted. Name it when it is declared
-    /// — `Design::input` and `Design::output` both require a name for exactly this
-    /// reason.
+    /// A port's identifier *is* its name, so an unnamed port cannot be emitted.
+    /// Name it when it is declared — `Design::input` and `Design::output` both
+    /// require a name for exactly this reason. The name is also the connection:
+    /// an instantiation site binds to a port by its name.
     UnnamedPort {
         /// Which list the port came from.
         direction: Direction,
@@ -110,6 +110,17 @@ pub enum Error {
     /// The variant exists because `Bits::zeros` is fallible and a `?` needs
     /// somewhere to land; it is unreachable in practice.
     Bits(BitsError),
+    /// A memory's read latency is one this emitter cannot build.
+    ///
+    /// Zero is an array read and one is a registered read; anything else would
+    /// need a pipeline of registers whose depth the emitter would have to
+    /// invent, and inventing it would be a guess about the design.
+    UnsupportedReadLatency {
+        /// The memory in question.
+        mem: NodeId,
+        /// The latency it asked for.
+        latency: u32,
+    },
     /// An output port has no driver.
     UndrivenPort {
         /// The output port.
@@ -177,6 +188,15 @@ impl fmt::Display for Error {
                 f,
                 "{id} has no single-value expression: it is a {kind} node. A memory must be \
                  read through a read port, and a node with no width has nothing to emit"
+            ),
+            Self::UnsupportedReadLatency { mem, latency } => write!(
+                f,
+                "memory {mem} has a read latency of {latency} cycle(s). This emitter \
+                 builds an array read (latency 0) and a registered read (latency 1), \
+                 which is what a hard SRAM macro on the competition's process does. \
+                 A deeper pipeline would have to be built explicitly, out of \
+                 registers, so that the design says how many cycles it waits rather \
+                 than the emitter guessing."
             ),
             Self::Bits(e) => write!(f, "a literal could not be built: {e}"),
             Self::UndrivenPort { id } => {

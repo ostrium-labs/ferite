@@ -1,6 +1,7 @@
 //! Turning a graph into word addresses and a flat instruction list.
 
 use core::ops::Range;
+use std::collections::BTreeMap;
 
 use ferrite_lithic_bits::words_for_width;
 use ferrite_lithic_ir::{Circuit, Deps, Node, NodeId};
@@ -139,6 +140,37 @@ impl Program {
         inputs: &[NodeId],
         outputs: &[NodeId],
     ) -> Result<Self, Error> {
+        Self::compile_with_clock(circuit, None, inputs, outputs)
+    }
+
+    /// Compile a circuit, with the clock stated rather than inferred.
+    ///
+    /// The clock is a property of the *module*, not of the graph: a module's
+    /// memory write ports are clocked by the module's clock, and a register
+    /// clocked by anything else is an error rather than a second domain. A
+    /// graph has no field for it, so [`Program::compile`] infers one from the
+    /// first register it finds.
+    ///
+    /// That inference is wrong for a design whose only state is a memory. Such
+    /// a design has no register, so there is no clock to infer, so a memory
+    /// write — which happens *at* the edge — never happens, and the design
+    /// reads as though the memory were empty. Stating the clock fixes that,
+    /// and it is the same clock the emitter would use.
+    ///
+    /// `clock` is the node id of the clock signal, or `None` to infer one.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Ir`] if the circuit fails its own checks; [`Error::NoInstanceModel`]
+    /// for an instance; [`Error::MultipleClocks`] if registers are clocked by
+    /// more than one signal; [`Error::NoClock`] if a clock is stated that the
+    /// graph does not have.
+    pub fn compile_with_clock(
+        circuit: &Circuit,
+        clock: Option<NodeId>,
+        inputs: &[NodeId],
+        outputs: &[NodeId],
+    ) -> Result<Self, Error> {
         // Validate before reading anything. `check_with_inputs` is what makes an
         // input port legal, so it has to run first or every port looks like an
         // undriven-wire bug.
@@ -150,6 +182,11 @@ impl Program {
         // Under `SimulationScheduling` a register and a memory are terminal, so
         // they sort before the nodes that read them, which is what lets a read
         // port rely on its memory already having a base word.
+        //
+        // `latency_extras` remembers which extra word belongs to which
+        // synchronous read port, so the op pass does not have to guess the
+        // reservation order back.
+        let mut latency_extras: BTreeMap<NodeId, usize> = BTreeMap::new();
         for id in &order {
             let width = circuit.width_of(*id);
             match circuit.get(*id)? {
@@ -170,6 +207,18 @@ impl Program {
                     let words = Allocator::memory_size(*depth, *data_width)?;
                     alloc.reserve(*id, Section::Mem, words);
                 }
+                // A synchronous read port *is* a register: the data is captured
+                // at the clock edge and arrives in the next cycle, so the port's
+                // own storage is a register slot. The array read that feeds it is
+                // combinational and needs a word of its own, because the two
+                // cannot be the same word — the capture holds the old value
+                // while the read produces the new one.
+                Node::ReadPort { mem, .. } if memory_read_latency(circuit, *mem)? > 0 => {
+                    alloc.reserve_value(*id, Section::Reg, width);
+                    let extra = alloc.reserve_extra(Section::Comb, words_for_width(width));
+                    alloc.reserve_zero();
+                    latency_extras.insert(*id, extra);
+                }
                 _ => alloc.reserve_value(*id, Section::Comb, width),
             }
         }
@@ -188,7 +237,22 @@ impl Program {
             }
         }
 
-        let mut builder = OpBuilder::new(circuit, &alloc);
+        let mut builder = OpBuilder::new(circuit, &alloc, &latency_extras);
+
+        // The stated clock, if there is one. It is noted before the ops are
+        // built, because a synchronous read's capture is a register and needs
+        // to know what clock it is clocked by.
+        //
+        // A stated clock that the graph does not carry is refused rather than
+        // ignored: a caller that says "this is the clock" and is wrong has a
+        // bug, and a silent fallback would hide it. A register clocked by
+        // anything else is a second domain, which `note_clock` refuses.
+        if let Some(stated) = clock {
+            if circuit.width_of(stated) != 1 {
+                return Err(Error::NotOneBit { signal: stated });
+            }
+            builder.note_clock(stated, circuit)?;
+        }
 
         // Pass four: every operand address is now known, so the ops can be built.
         // Ordering follows the topological order, and the four node kinds that
@@ -223,6 +287,12 @@ impl Program {
                     });
                 }
                 Node::Mem { .. } => builder.collect_mem_writes(*id, circuit)?,
+                // A synchronous read port's capture is a register, and it is
+                // collected here rather than in the op pass because it needs the
+                // clock, which is only known once a register has been seen.
+                Node::ReadPort { .. } => {
+                    builder.collect_read_capture(*id, circuit)?;
+                }
                 _ => {}
             }
         }
@@ -410,6 +480,16 @@ struct Allocator {
     /// Per node: the section it belongs to and how many words it needs.
     placement: Vec<Option<Placement>>,
     resolved: Vec<Option<Word>>,
+    /// Extra allocations that belong to no node.
+    ///
+    /// A synchronous read port needs a word for the array read that feeds its
+    /// capture register: the capture lives in the registers section, because it
+    /// *is* a register, and the array read is combinational, so the two cannot
+    /// share a word.
+    extras: Vec<Placement>,
+    extra_resolved: Vec<Word>,
+    /// The index of the shared zero word, if one was reserved.
+    zero: Option<usize>,
     comb_words: usize,
     reg_words: usize,
     mem_words: usize,
@@ -437,11 +517,67 @@ impl Allocator {
         Allocator {
             placement: vec![None; nodes],
             resolved: vec![None; nodes],
+            extras: Vec::new(),
+            extra_resolved: Vec::new(),
+            zero: None,
             comb_words: 0,
             reg_words: 0,
             mem_words: 0,
             const_words: 0,
         }
+    }
+
+    /// Reserves a word that belongs to no node.
+    ///
+    /// Returns the extra's index, which [`Allocator::extra_word`] turns into an
+    /// address once the sections are placed.
+    fn reserve_extra(&mut self, section: Section, words: usize) -> usize {
+        match section {
+            Section::Comb => self.comb_words += words,
+            Section::Reg => self.reg_words += words,
+            Section::Mem => self.mem_words += words,
+            Section::Const => self.const_words += words,
+        }
+        self.extras.push(Placement { section, words });
+        // The address is filled in by `place_all`; the slot exists now so that
+        // the assignment there is an assignment and not a push.
+        self.extra_resolved.push(0);
+        self.extras.len() - 1
+    }
+
+    /// Reserves the program's one shared zero word.
+    ///
+    /// A register's reset and clear inputs are word addresses, and a capture
+    /// register wants both of them to be zero — it never resets and never
+    /// clears. Rather than inventing a node for a constant zero, the program
+    /// keeps one word in the constants section that nothing ever writes: the
+    /// buffer starts zero-filled, so a word nobody writes is a zero.
+    fn reserve_zero(&mut self) {
+        if self.zero.is_none() {
+            self.zero = Some(self.reserve_extra(Section::Const, 1));
+        }
+    }
+
+    /// The address of a reserved extra.
+    ///
+    /// # Panics
+    ///
+    /// If the extra was never reserved, or was reserved after placement.
+    fn extra_word(&self, index: usize) -> Word {
+        self.extra_resolved
+            .get(index)
+            .copied()
+            .unwrap_or_else(|| panic!("extra {index} was never given a word address"))
+    }
+
+    /// The address of the shared zero word.
+    ///
+    /// # Panics
+    ///
+    /// If no zero word was reserved.
+    fn zero_word(&self) -> Word {
+        let index = self.zero.expect("no zero word was reserved");
+        self.extra_word(index)
     }
 
     /// Records that `id` needs `words` words of `section`.
@@ -500,6 +636,20 @@ impl Allocator {
             cursors[slot] += placement.words;
             self.resolved[index] = Some(base);
         }
+        // The extras come after the nodes, in the order they were reserved. The
+        // reservation order is the topological order of the walk that reserved
+        // them, so the addresses are reproducible between runs.
+        for (index, placement) in self.extras.iter().enumerate() {
+            let slot = match placement.section {
+                Section::Comb => 0,
+                Section::Reg => 1,
+                Section::Mem => 2,
+                Section::Const => 3,
+            };
+            let base = cursors[slot];
+            cursors[slot] += placement.words;
+            self.extra_resolved[index] = base;
+        }
         sections
     }
 
@@ -542,10 +692,16 @@ struct OpBuilder<'a> {
     /// The first clock any register used. A second one is refused, so this stays
     /// `Option` and is checked exactly once per register.
     clock: Option<NodeId>,
+    /// Which extra word belongs to which synchronous read port.
+    latency_extras: &'a BTreeMap<NodeId, usize>,
 }
 
 impl<'a> OpBuilder<'a> {
-    fn new(circuit: &'a Circuit, alloc: &'a Allocator) -> Self {
+    fn new(
+        circuit: &'a Circuit,
+        alloc: &'a Allocator,
+        latency_extras: &'a BTreeMap<NodeId, usize>,
+    ) -> Self {
         OpBuilder {
             circuit,
             alloc,
@@ -553,6 +709,7 @@ impl<'a> OpBuilder<'a> {
             reg_updates: Vec::new(),
             mem_updates: Vec::new(),
             clock: None,
+            latency_extras,
         }
     }
 
@@ -800,6 +957,13 @@ impl<'a> OpBuilder<'a> {
                 data_width,
             } => {
                 let (_, depth) = self.circuit.memory_shape(*mem)?;
+                // A synchronous read port's own slot is the capture register, so
+                // the array read goes to a word of its own and the capture takes
+                // the port's word.
+                let (dst, hold) = match self.latency_extras.get(&id) {
+                    Some(extra) => (self.alloc.extra_word(*extra), true),
+                    None => (dst, false),
+                };
                 Op::ReadPort {
                     dst,
                     mem: self.word(*mem),
@@ -808,6 +972,7 @@ impl<'a> OpBuilder<'a> {
                     address_width: self.width(*address),
                     enable: self.word(*enable),
                     data_width: *data_width,
+                    hold,
                 }
             }
             Node::Instance { name, .. } => {
@@ -823,6 +988,7 @@ impl<'a> OpBuilder<'a> {
             depth,
             data_width,
             write_ports,
+            ..
         } = circuit.get(id)?
         else {
             return Ok(());
@@ -842,4 +1008,51 @@ impl<'a> OpBuilder<'a> {
         }
         Ok(())
     }
+
+    /// Records a synchronous read port's capture register.
+    ///
+    /// The capture is what makes a synchronous read synchronous: the array read
+    /// is combinational and produces the *next* value, and the capture takes it
+    /// at the clock edge, so the port's own slot holds the value as of the last
+    /// edge. The capture never resets and never clears — the shared zero word
+    /// stands in for both — because a read port has no reset of its own.
+    ///
+    /// The capture reads the array read's word, which is computed during the
+    /// settle pass *before* the edge and therefore before the memory's writes
+    /// are applied. That is exactly a macro's read-during-write behaviour: a
+    /// read issued in the same cycle as a write to the same address returns the
+    /// old data, because the capture latched before the write landed.
+    fn collect_read_capture(&mut self, id: NodeId, circuit: &Circuit) -> Result<(), Error> {
+        let Some(extra) = self.latency_extras.get(&id).copied() else {
+            return Ok(());
+        };
+        let clock = self.clock.ok_or(Error::NoClock)?;
+        self.note_clock(clock, circuit)?;
+        let width = self.width(id);
+        self.reg_updates.push(RegUpdate {
+            data: self.alloc.extra_word(extra),
+            clock: self.word(clock),
+            reset: self.alloc.zero_word(),
+            clear: self.alloc.zero_word(),
+            current: self.word(id),
+            width,
+        });
+        Ok(())
+    }
+}
+
+/// The read latency of the memory a read port belongs to.
+///
+/// # Errors
+///
+/// If the read port's memory is not a memory, which the IR's own checks
+/// already rule out.
+fn memory_read_latency(circuit: &Circuit, mem: NodeId) -> Result<u32, Error> {
+    let ferrite_lithic_ir::Node::Mem { read_latency, .. } = circuit.get(mem)? else {
+        return Err(Error::Ir(ferrite_lithic_ir::Error::NotAMemory {
+            target: mem,
+            kind: circuit.get(mem)?.kind(),
+        }));
+    };
+    Ok(*read_latency)
 }

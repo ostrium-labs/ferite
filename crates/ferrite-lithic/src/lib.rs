@@ -138,7 +138,7 @@ mod ports;
 #[doc(hidden)]
 pub mod __private;
 
-pub use design::{Design, Error, Signal};
+pub use design::{BlackboxDirection, BlackboxPort, Design, Error, Instance, Signal};
 pub use ports::{
     Error as PortError, PortList, WaveFormat, assign, check_width, inputs, outputs, take_many,
     take_one, wires,

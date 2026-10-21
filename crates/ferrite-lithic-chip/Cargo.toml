@@ -1,0 +1,22 @@
+[package]
+name = "ferrite-lithic-chip"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.97"
+license = "Apache-2.0"
+repository = "https://github.com/ostrium-labs/ferrite-lithic"
+authors = ["Dinakaran V <112177746+dina-kar@users.noreply.github.com>"]
+description = "The Tiny Tapeout submission boundary for the Ferrite Lithic hardware DSL"
+
+[dependencies]
+ferrite-lithic = { workspace = true }
+ferrite-lithic-ir = { workspace = true }
+ferrite-lithic-pdk = { workspace = true }
+ferrite-lithic-rtl = { workspace = true }
+
+[dev-dependencies]
+ferrite-lithic-bits = { workspace = true }
+ferrite-lithic-sim = { workspace = true }
+
+[lints]
+workspace = true

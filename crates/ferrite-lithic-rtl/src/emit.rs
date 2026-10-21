@@ -63,7 +63,7 @@
 use std::collections::BTreeSet;
 
 use ferrite_lithic_bits::Bits;
-use ferrite_lithic_ir::{CaseArm, Circuit, Deps, Node, NodeId, WritePort};
+use ferrite_lithic_ir::{CaseArm, Circuit, Deps, InstancePort, MemMacro, Node, NodeId, WritePort};
 
 use crate::error::Error;
 use crate::module::{Module, Signature};
@@ -154,7 +154,7 @@ impl Emitter<'_> {
         // A blank line between sections, so the fixed order is visible in the output
         // rather than only in this file.
         let mark = self.out.len();
-        self.declarations();
+        self.declarations()?;
         self.separate(mark);
         let mark = self.out.len();
         self.statements()?;
@@ -202,7 +202,7 @@ impl Emitter<'_> {
 
     // ------------------------------------------------------------ declarations
 
-    fn declarations(&mut self) {
+    fn declarations(&mut self) -> Result<(), Error> {
         for index in 0..self.reachable.len() {
             let id = self.reachable[index];
             let Some(node) = self.circuit().get(id).ok() else {
@@ -214,11 +214,25 @@ impl Emitter<'_> {
                 // list. Neither needs a declaration here.
                 Node::Constant { .. } => continue,
                 Node::Wire { .. } if self.ports.contains(&id) => continue,
+                // An instance is a statement, not a value: it has no net of its
+                // own, only the ports it drives. The nets it drives are wires
+                // and are declared as such.
+                Node::Instance { .. } => continue,
                 // A `case` node is a `reg`, not a net: it is assigned inside an
                 // `always @*` block.
                 Node::Reg { .. } | Node::Case { .. } => {
                     self.line(&decl("reg", self.circuit().width_of(id), &name));
                 }
+                // A synchronous read port is a `reg` too: the capture that makes
+                // the read synchronous is an `always` block, and a net driven by
+                // an `always` block has to be a register. A `wire` here emits
+                // text that does not elaborate.
+                Node::ReadPort { mem, .. } if self.is_synchronous_read(*mem) => {
+                    self.line(&decl("reg", self.circuit().width_of(id), &name));
+                }
+                // A memory built out of a hard macro has no array: the macro is
+                // the storage, and it is instantiated in the statements section.
+                Node::Mem { macro_form, .. } if macro_form.is_some() => continue,
                 Node::Mem {
                     data_width, depth, ..
                 } => {
@@ -233,6 +247,7 @@ impl Emitter<'_> {
                 }
             }
         }
+        Ok(())
     }
 
     // -------------------------------------------------------------- statements
@@ -251,27 +266,31 @@ impl Emitter<'_> {
                     reset,
                     clear,
                 } => self.register(id, data, clock, reset, clear)?,
-                Node::Mem { write_ports, .. } => self.memory_writes(id, &write_ports)?,
+                // A memory built out of a hard macro is instantiated, not
+                // declared: the macro is the storage.
+                Node::Mem {
+                    macro_form: Some(macro_form),
+                    ..
+                } => self.memory_macro(id, &macro_form)?,
+                Node::Mem { write_ports, .. } => {
+                    self.memory_initial(id)?;
+                    self.memory_writes(id, &write_ports)?;
+                }
                 Node::ReadPort {
                     mem,
                     address,
                     enable,
                     ..
                 } => {
-                    let name = self.names.name(id).to_string();
-                    let memory = self.names.name(mem).to_string();
-                    let enable = self.value(enable)?;
-                    let address = self.value(address)?;
-                    self.line(&format!(
-                        "{INDENT}assign {name} = {enable} ? {memory}[{address}] : '0;"
-                    ));
+                    self.read_port(id, mem, address, enable)?;
                 }
                 Node::Instance {
                     name,
                     params,
-                    inputs,
-                    ..
-                } => self.instantiate(id, &name, &params, &inputs)?,
+                    ports,
+                } => {
+                    self.instantiate(id, &name, &params, &ports)?;
+                }
                 Node::Case {
                     scrutinee,
                     arms,
@@ -285,6 +304,116 @@ impl Emitter<'_> {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// One read port.
+    ///
+    /// Three shapes, and the difference between them is the memory's read
+    /// latency:
+    ///
+    /// - **Latency zero, no macro.** `assign q = en ? mem[addr] : '0;` — the
+    ///   array read, in the same cycle as the address.
+    /// - **Latency zero, with a macro.** Nothing is emitted: the macro drives
+    ///   the read port's net itself, because the macro *is* the read.
+    /// - **Latency one.** A register: `always @(posedge clk) q <= en ? mem[addr]
+    ///   : q;`. The capture is at the edge and the data arrives in the next
+    ///   cycle, which is what a hard SRAM macro does and what the simulator
+    ///   models. The `q` on the hold branch is the macro's behaviour too: a
+    ///   disabled read holds the last value rather than driving zero.
+    fn read_port(
+        &mut self,
+        id: NodeId,
+        mem: NodeId,
+        address: NodeId,
+        enable: NodeId,
+    ) -> Result<(), Error> {
+        let name = self.names.name(id).to_string();
+        let memory = self.names.name(mem).to_string();
+        let enable = self.value(enable)?;
+        let address = self.value(address)?;
+
+        let Node::Mem {
+            read_latency,
+            macro_form,
+            ..
+        } = self.circuit().get(mem)?.clone()
+        else {
+            return Err(Error::NotAValue {
+                id: mem,
+                kind: self.circuit().get(mem)?.kind(),
+            });
+        };
+
+        if macro_form.is_some() {
+            // The macro drives this net. Emitting an assign for it as well
+            // would give the net two drivers.
+            return Ok(());
+        }
+
+        match read_latency {
+            0 => self.line(&format!(
+                "{INDENT}assign {name} = {enable} ? {memory}[{address}] : '0;"
+            )),
+            1 => {
+                let clock = self.module.clock().ok_or(Error::NoClock {
+                    kind: "memory read",
+                    id: mem,
+                })?;
+                let clock = self.clock_of(clock, mem, "memory read")?;
+                self.line(&format!("{INDENT}always @(posedge {clock}) begin"));
+                self.line(&format!(
+                    "{INDENT}{INDENT}if ({enable}) {name} <= {memory}[{address}];"
+                ));
+                self.line(&format!("{INDENT}{INDENT}else {name} <= {name};"));
+                self.line(&format!("{INDENT}end"));
+            }
+            other => {
+                return Err(Error::UnsupportedReadLatency {
+                    mem,
+                    latency: other,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// A memory built out of a hard macro.
+    ///
+    /// The macro is instantiated with the ports the caller bound, and the
+    /// memory's own write ports and read port are *not* emitted: the macro does
+    /// the reading and the writing. The macro's output port is bound to the
+    /// read port's net, so the design reads the macro exactly as it would have
+    /// read the array.
+    fn memory_macro(&mut self, id: NodeId, macro_form: &MemMacro) -> Result<(), Error> {
+        let label = self.names.label(id).to_string();
+        let module = legalise(&macro_form.module);
+        let mut text = format!("{INDENT}{module}");
+        if !macro_form.params.is_empty() {
+            let rendered: Vec<String> = macro_form
+                .params
+                .iter()
+                .map(|(name, value)| format!(".{}({})", legalise(name), literal(value)))
+                .collect();
+            text.push_str(&format!(" #({})", rendered.join(", ")));
+        }
+        text.push_str(&format!(" {label} (\n"));
+        for port in &macro_form.ports {
+            let value = self.value(port.signal)?;
+            text.push_str(&format!(
+                "{INDENT}{INDENT}.{} ({value}),\n",
+                legalise(&port.name)
+            ));
+        }
+        // The last connection has no trailing comma.
+        if text.ends_with(",\n") {
+            let trimmed = text.trim_end_matches('\n');
+            let trimmed = trimmed.strip_suffix(',').unwrap_or(trimmed);
+            text = format!("{trimmed}\n");
+        }
+        text.push_str(&format!("{INDENT});"));
+        self.out.push_str(&text);
+        self.out.push('\n');
         Ok(())
     }
 
@@ -354,18 +483,55 @@ impl Emitter<'_> {
         Ok(())
     }
 
+    /// The `initial` block that gives a memory its contents.
+    ///
+    /// A memory with an image is not a memory of zeros: a firmware image and a
+    /// protocol lookup table are both data, and both have to be in the Verilog
+    /// rather than assumed. The block is emitted once per memory, after the
+    /// declarations and before the write blocks, and it assigns each word
+    /// literally.
+    ///
+    /// A macro-backed memory has no array to initialise — the macro is the
+    /// storage, and a foundry SRAM has no initialisation port — so nothing is
+    /// emitted for it. The image is loaded by the firmware instead.
+    fn memory_initial(&mut self, id: NodeId) -> Result<(), Error> {
+        let Node::Mem {
+            initial: Some(contents),
+            data_width,
+            ..
+        } = self.circuit().get(id)?.clone()
+        else {
+            return Ok(());
+        };
+        let memory = self.names.name(id).to_string();
+        self.line(&format!("{INDENT}initial begin"));
+        for (index, word) in contents.iter().enumerate() {
+            self.line(&format!(
+                "{INDENT}{INDENT}{memory}[{index}] = {};",
+                literal(word)
+            ));
+        }
+        self.line(&format!("{INDENT}end"));
+        let _ = data_width;
+        Ok(())
+    }
+
     /// An instantiation site.
     ///
-    /// Ports are positional — `.i0`, `.i1`, … and `.o0` — because the IR records a
-    /// submodule's input *order* but not its port *names*. See
-    /// [`PortNames::Positional`](crate::PortNames::Positional) for the module-side
-    /// convention that pairs with this, and why the submodule declares the names.
+    /// Ports are connected **by name**. The name is the module's own, and it is
+    /// the connection: `.A_CLK(clk)`, `.A_DOUT(dout)`.
+    ///
+    /// This replaced a positional scheme (`.i0`, `.i1`, `.o0`) that existed
+    /// because the graph had nowhere to put a port's name. A hard SRAM macro
+    /// has seventeen ports named by the foundry and a RISC-V core has
+    /// twenty-odd outputs; neither can be bound positionally to a module this
+    /// project did not write.
     fn instantiate(
         &mut self,
         id: NodeId,
         module: &str,
         params: &[(String, Bits)],
-        inputs: &[NodeId],
+        ports: &[InstancePort],
     ) -> Result<(), Error> {
         let label = self.names.label(id).to_string();
         // The instantiation site spells the submodule by the name in the graph, so
@@ -382,14 +548,14 @@ impl Emitter<'_> {
             text.push_str(&format!(" #({})", rendered.join(", ")));
         }
         text.push_str(&format!(" {label} (\n"));
-        for (index, input) in inputs.iter().enumerate() {
-            // Every input is followed by a comma, because the single output port
-            // always comes after them.
-            let value = self.value(*input)?;
-            text.push_str(&format!("{INDENT}{INDENT}.i{index} ({value}),\n"));
+        for (index, port) in ports.iter().enumerate() {
+            let value = self.value(port.signal)?;
+            let comma = if index + 1 == ports.len() { "" } else { "," };
+            text.push_str(&format!(
+                "{INDENT}{INDENT}.{} ({value}){comma}\n",
+                legalise(&port.name)
+            ));
         }
-        let out = self.names.name(id).to_string();
-        text.push_str(&format!("{INDENT}{INDENT}.o0 ({out})\n"));
         text.push_str(&format!("{INDENT});"));
         self.out.push_str(&text);
         self.out.push('\n');
@@ -446,6 +612,12 @@ impl Emitter<'_> {
             let Some(driver) = self.circuit().driver_of(id)? else {
                 continue;
             };
+            // A wire driven by an instance is driven by the *instantiation*, not
+            // by an expression: the instance's port connection is the assignment.
+            // Aliasing it as well would give the net two drivers.
+            if matches!(self.circuit().get(driver)?, Node::Instance { .. }) {
+                continue;
+            }
             let name = self.names.name(id).to_string();
             let text = self.value(driver)?;
             self.line(&format!("{INDENT}assign {name} = {text};"));
@@ -478,6 +650,12 @@ impl Emitter<'_> {
         match self.circuit().get(id)? {
             Node::Constant { value } => Ok(literal(value)),
             Node::Mem { .. } => Err(Error::NotAValue {
+                id,
+                kind: self.circuit().get(id)?.kind(),
+            }),
+            // An instance is a statement, not a value. Its outputs are separate
+            // nets it drives, and those nets are what a design reads.
+            Node::Instance { .. } => Err(Error::NotAValue {
                 id,
                 kind: self.circuit().get(id)?.kind(),
             }),
@@ -619,6 +797,20 @@ impl Emitter<'_> {
 
     fn is_constant_zero(&self, id: NodeId) -> bool {
         matches!(self.circuit().get(id), Ok(Node::Constant { value }) if value.is_zero())
+    }
+
+    /// Whether a memory's read is synchronous.
+    ///
+    /// A memory with a read latency of one is a register at its read port: the
+    /// data is captured at the clock edge and arrives in the next cycle. That
+    /// is what a hard SRAM macro does, and it is why the two kinds of read
+    /// have to be told apart in the emitted text — one is a wire and one is a
+    /// register.
+    fn is_synchronous_read(&self, mem: NodeId) -> bool {
+        matches!(
+            self.circuit().get(mem),
+            Ok(Node::Mem { read_latency, .. }) if *read_latency > 0
+        )
     }
 
     fn circuit(&self) -> &Circuit {

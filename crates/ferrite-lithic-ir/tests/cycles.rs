@@ -176,8 +176,20 @@ fn an_instance_is_a_combinational_boundary_for_loop_checking_only() {
         let mut c = Circuit::new();
         let w = c.wire(8).unwrap();
         let k = c.constant(bits(3, 8));
-        let sub = c.instance("blender", Vec::new(), vec![w, k], 8).unwrap();
-        c.drive(w, sub).unwrap();
+        // The instance's output is a net it drives, so the loop closes through
+        // the output port rather than through the instance node itself.
+        let out = c.wire(8).unwrap();
+        c.instance(
+            "blender",
+            Vec::new(),
+            vec![
+                ferrite_lithic_ir::InstancePort::input("w", w, 8),
+                ferrite_lithic_ir::InstancePort::input("k", k, 8),
+                ferrite_lithic_ir::InstancePort::output("q", out, 8),
+            ],
+        )
+        .unwrap();
+        c.drive(w, out).unwrap();
         c
     };
     let c = build();

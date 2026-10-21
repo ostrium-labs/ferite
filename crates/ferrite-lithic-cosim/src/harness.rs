@@ -33,7 +33,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use ferrite_lithic::{Design, Signal};
 use ferrite_lithic_bits::Bits;
-use ferrite_lithic_rtl::{Module, PortNames, mangle_port_name};
+use ferrite_lithic_rtl::{Module, mangle_port_name};
 
 use crate::error::Error;
 use crate::stimulus::Stimulus;
@@ -142,11 +142,10 @@ impl Plan {
 
     /// The plan for a design and the module emitted from it.
     ///
-    /// The port names come from the design, or from the positional scheme if the
-    /// module was declared with [`PortNames::Positional`] — and the plan has to
-    /// agree with whatever the emitter wrote, because the generated driver
-    /// assigns `dut->name` and a name the emitter never declared would be a C++
-    /// compile error rather than a disagreement about the design.
+    /// The port names come from the design, and the plan has to agree with
+    /// whatever the emitter wrote, because the generated driver assigns
+    /// `dut->name` and a name the emitter never declared would be a C++ compile
+    /// error rather than a disagreement about the design.
     ///
     /// **The clock is a port but is not a stimulus column.** It is excluded from
     /// `inputs` for the reason [`Plan::new`] gives, and the design is still emitted
@@ -157,15 +156,9 @@ impl Plan {
     /// Whatever [`Module::port_identifiers`] reports, which is what [`Module::emit`]
     /// reports: an unnamed port, an empty name, or a graph that fails its own checks.
     pub fn of(design: &Design, module: &Module) -> Result<Self, Error> {
-        let positional = module.port_names() == PortNames::Positional;
         let clock_id = module.clock();
-        // The emitted identifiers, which is what the driver will assign. Positional
-        // modules do not use them, and asking anyway would fail on an unnamed port.
-        let emitted = if positional {
-            Vec::new()
-        } else {
-            module.port_identifiers()?
-        };
+        // The emitted identifiers, which is what the driver will assign.
+        let emitted = module.port_identifiers()?;
         let all_inputs = design.input_ports();
         let declared: Vec<&Signal> = all_inputs.iter().collect();
         // The clock is a module field, so it is one of the ports, and the plan
@@ -177,7 +170,7 @@ impl Plan {
             declared
                 .iter()
                 .position(|signal| signal.id() == id)
-                .map(|index| port_name(declared[index], index, positional, &emitted))
+                .map(|index| port_name(declared[index], index, &emitted))
         });
         let inputs = declared
             .iter()
@@ -188,7 +181,7 @@ impl Plan {
                 verilog: emitted
                     .get(index)
                     .cloned()
-                    .unwrap_or_else(|| port_name(signal, index, positional, &emitted)),
+                    .unwrap_or_else(|| port_name(signal, index, &emitted)),
                 width: signal.width(),
             })
             .collect();
@@ -203,7 +196,7 @@ impl Plan {
                     verilog: emitted
                         .get(offset)
                         .cloned()
-                        .unwrap_or_else(|| port_name(signal, index, positional, &emitted)),
+                        .unwrap_or_else(|| port_name(signal, index, &emitted)),
                     width: signal.width(),
                 }
             })
@@ -276,10 +269,7 @@ impl Plan {
 /// the fallback for a hand-built plan, and it cannot reproduce a collision suffix --
 /// two ports whose names both legalise to `a_b` come out as `a_b` and `a_b_1` --
 /// which is exactly why [`Plan::of`] asks the emitter instead.
-fn port_name(signal: &Signal, index: usize, positional: bool, emitted: &[String]) -> String {
-    if positional {
-        return format!("i{index}");
-    }
+fn port_name(signal: &Signal, index: usize, emitted: &[String]) -> String {
     emitted
         .get(index)
         .cloned()

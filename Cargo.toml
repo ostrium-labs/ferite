@@ -20,6 +20,9 @@ ferrite-lithic-wave = { path = "crates/ferrite-lithic-wave", version = "0.0.1" }
 ferrite-lithic-cosim = { path = "crates/ferrite-lithic-cosim", version = "0.0.1" }
 ferrite-lithic-tb = { path = "crates/ferrite-lithic-tb", version = "0.0.1" }
 ferrite-lithic-corpus = { path = "crates/ferrite-lithic-corpus", version = "0.0.1" }
+ferrite-lithic-pdk = { path = "crates/ferrite-lithic-pdk", version = "0.0.1" }
+ferrite-lithic-chip = { path = "crates/ferrite-lithic-chip", version = "0.0.1" }
+ferrite-lithic-sim = { path = "crates/ferrite-lithic-sim", version = "0.0.1" }
 
 [workspace.lints.rust]
 # `deny`, deliberately not `forbid`. `forbid` cannot be overridden by a local

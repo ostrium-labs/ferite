@@ -8,6 +8,7 @@ const ROUTES = [
   "/docs/basics", "/docs/ocaml", "/docs/hardcaml", "/docs/why-rust", "/docs/benchmarks",
   "/docs/bits", "/docs/ir", "/docs/design", "/docs/sim", "/docs/rtl",
   "/docs/derive", "/docs/wave", "/docs/cosim", "/docs/tb",
+  "/docs/pdk", "/docs/chip",
   "/docs/corpus", "/docs/findings",
 ];
 
@@ -54,7 +55,7 @@ for (const route of ROUTES) {
     problems.push(`header marks ${info.barCurrent} sections, want exactly 1`);
   }
   if (route.startsWith("/docs/") && route !== "/docs") {
-    if (info.sidebar !== 16) problems.push(`sidebar ${info.sidebar}, want 16`);
+    if (info.sidebar !== 18) problems.push(`sidebar ${info.sidebar}, want 18`);
     if (!info.current) problems.push("no current item");
     if (!info.next && !["/docs/findings", "/docs/benchmarks"].includes(route)) problems.push("no next link");
   }
