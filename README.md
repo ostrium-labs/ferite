@@ -17,6 +17,15 @@ the front end, the simulator, the emitter, the derive macro, the waveform data,
 the cosimulator and the step testbench. Two more crates carry the submission
 boundary: the process knowledge and the Tiny Tapeout wrapper.
 
+**The corpus is synthesised, not just simulated.** Every design's Verilog goes
+through yosys, and the gate counts are measured rather than estimated: the
+difference between a node count and a gate count is 44× on `sha256`, which is
+why one is not a substitute for the other. Verilator, Icarus and yosys are all
+looked for rather than required, so `cargo test` works without them; all three
+**print what they skipped**, and CI has a job for each that *fails if anything
+skipped* — because a green run in which every equivalence test took its skip
+path is green and meaningless.
+
 **The whole tree is green, and the corpus is what made it that way.**
 Twenty-one designs across seven tiers, each differentially tested against the crate
 that defines it, driven through the step testbench, and cosimulated against Verilator.
@@ -59,6 +68,17 @@ recorded rather than quietly fixed.** The instruction memory is 2–4 KB, not
 11–26 KB, because 24 tiles is the whole die and a macro costs its *bounding
 box* rather than its area. ADR-0023 has the table, measured out of the IHP
 PDK's own LEF files, and what it does to the firmware target.
+
+**The designs are synthesised now, and the block ciphers do not fit on the
+die.** The plan's gate had two halves — *our DSL synthesises and places* — and
+the synthesis half is now a measurement rather than an assertion. The
+competition allows 24 tiles of about 1 000 cells each, so roughly 24 000
+cells for the whole die, and `sha256` alone is 268 470 gates: **11× over**,
+with `aes` at 7.6× and `chacha20` at 7.0×. A 64-byte frame header parser
+(`packet`) is 4 302, or 18% of the budget. A protocol emulator fits the
+allocation; a crypto accelerator does not — which is the same answer the
+Loams audit reached from the other end, where there was no arithmetic worth
+accelerating in the first place. `docs/benchmarks.md` has the table.
 
 The documentation site is in [`site/`](site/). Eighteen pages in reading order:
 the background a hardware DSL needs, the OCaml and Hardcaml lineage this is a port

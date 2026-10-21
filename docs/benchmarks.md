@@ -1,11 +1,16 @@
-# Measured graph metrics
+# Measured graph metrics and synthesised gate counts
 
 Every figure below is derived from the IR by `tests/graph_metrics.rs`, for every design, by
-the same code. Regenerate the tables with:
+the same code, or measured by a synthesiser in `tests/synthesis.rs`. Regenerate the tables
+with:
 
 ```sh
 cargo test -p ferrite-lithic-corpus --test graph_metrics -- --nocapture --ignored
+cargo test -p ferrite-lithic-corpus --test synthesis  -- --nocapture --ignored
 ```
+
+The second one needs `yosys` on the PATH and prints a **SKIPPED** line without it, so a
+green run that measured nothing is visible rather than hidden.
 
 ## What each column is
 
@@ -20,6 +25,11 @@ cargo test -p ferrite-lithic-corpus --test graph_metrics -- --nocapture --ignore
 Area, power and frequency are **not derivable from the IR** and are not claimed anywhere in
 this project. A number here is a fact about the graph; what a synthesiser builds from that
 graph is a different question needing a different tool.
+
+That tool is `yosys`, and the section below answers the question for the corpus. The
+distinction matters more than it looks: `sha256` is 6 090 nodes and 268 470 gates, and the
+ratio between those two numbers is the whole reason a node count cannot be used for an area
+estimate.
 
 ## The table
 
@@ -298,6 +308,103 @@ The claim that survives, and needs no wall clock at all:
 Converting the design side to time needs a clock, which is why every ratio in this document
 is quoted at a stated 1 GHz — and why they must be read together with the
 combinational-depth column above. A design 34 levels deep will not close at 1 GHz.
+
+## Synthesised gate counts
+
+`tests/synthesis.rs` emits each design's Verilog, runs `synth -noabc` and `techmap` over
+it, and reads the cell counts back out of yosys's own `stat` output.
+
+**These are generic gates, not standard cells.** The IHP PDK's liberty files are not in
+this repository and are not installable from it, so there is no library to map to and the
+counts are of yosys's internal gate primitives — `$_AND_`, `$_XOR_`, `$_MUX_`,
+`$_SDFF_PP0_`. Three consequences, and the third is the important one:
+
+- The counts are **comparable between designs**, because every design goes through the
+  same synthesis at the same settings.
+- They are **not an area figure**, because a generic gate is not an IHP cell and an IHP
+  cell's area varies by an order of magnitude across the library.
+- The **flip-flop count converts to a budget** and the gate count does not, because a
+  flip-flop is a flip-flop in every library and the competition's rules give the budget
+  directly: about 320 DFF per tile, 24 tiles, 7 680 flip-flops for the whole die.
+
+```
+design         variant                    gates   flops reg tiles   mem bits
+--------------------------------------------------------------------------------
+crc3           3-bit CRC                     52       6      0.02          0
+crc32          CRC-32                       446      64      0.20          0
+ghash          128-bit field                844     786      2.46          0
+sha256         64 unrolled rounds        268470     512      1.60          0
+chacha20       one block/cycle           166924    1024      3.20          0
+aes            200-arm S-box             181752     256      0.80          0
+hex            4 bits in, 8 out              70      20      0.06          0
+base64         6 bits in, 8 out             172      24      0.07          0
+memchr         comparator                    62      34      0.11          0
+memchr_rom     256-entry ROM                 58      34      0.11          0
+aho_corasick   19 states                    712      34      0.11          0
+dfa            5 states, 64 symbols         454      22      0.07          0
+bitpack        expander, w=8               2296      12      0.04          0
+rle            decoder                       96      32      0.10          0
+roaring        bitmap                      1936     136      0.42          0
+hamming        popcount64                  1544      16      0.05          0
+sorting        bitonic, n=8                2832     128      0.40          0
+sketch         64-bit state                1782     128      0.40          0
+packet         frame in/frame out          4302     658      2.06          0
+```
+
+### Finding 4: the block ciphers are an order of magnitude too big to fabricate
+
+The competition allows 24 tiles of about 1 000 logic cells each: **roughly 24 000 cells
+for the whole die.** The three block ciphers are over that *on their own*:
+
+| Design | Gates | Multiple of the whole die's cell budget |
+|---|---:|---:|
+| `sha256` | 268 470 | 11.2× |
+| `aes` | 181 752 | 7.6× |
+| `chacha20` | 166 924 | 7.0× |
+
+`sha256` is 6 090 IR nodes and 268 470 gates. The ratio is 44 gates per node, and it is
+the reason the `nodes` column cannot be used for an area estimate: an unrolled round of
+SHA-256 is mostly `xor` and `and` on wide words, and a 32-bit XOR is 32 gates.
+
+**None of this is a defect in the corpus.** The corpus exists to find defects in the
+*tools*, and it does that far better with a small design: `crc3` — 52 gates, three
+flip-flops — found four defects that 471 tests of the tools had not. A 268 000-gate design
+would have found the same four and taken a thousand times longer to simulate.
+
+What it does establish is a boundary on what the competition chip can be. The designs that
+*would* fit are the small ones, and they are the protocol-shaped ones:
+
+| Design | Gates | Share of the die's cell budget |
+|---|---:|---:|
+| `crc3` | 52 | 0.2% |
+| `memchr` | 62 | 0.3% |
+| `hex` | 70 | 0.3% |
+| `rle` | 96 | 0.4% |
+| `crc32` | 446 | 1.9% |
+| `dfa` | 454 | 1.9% |
+| `aho_corasick` | 712 | 3.0% |
+| `packet` — a frame parser | 4 302 | 17.9% |
+
+`packet` is the interesting one: a 64-byte frame header parser, 4 302 gates, is 18% of
+the logic budget. A RISC-V core at roughly 750 LUTs is a few thousand gates more. So a
+protocol emulator — a core, a pin and timing engine, a frame parser — is a design that
+fits in the allocation with room to spare, and an accelerator for a block cipher is not.
+
+That is the same conclusion the plan reached from the other end, where the audit of
+Loams found *"the entire arithmetic core is roughly 200 lines across six functions"* and
+no ANN algorithm to accelerate. Two independent routes to the same answer: the source has
+nothing worth accelerating, and the die has no room to accelerate it in.
+
+### Finding 5: `ghash` is a register design, and that is a different cost
+
+`ghash` is 786 flip-flops in 844 gates. It is 2.46 tiles of *register* budget while
+`packet` — six times the gates — is 2.06. A flip-flop is a much larger cell than a gate,
+so a design that is mostly state is expensive in a way the gate count does not show, and
+the two budgets have to be checked separately.
+
+The competition's own arithmetic makes this concrete: 24 tiles × 320 DFF = 7 680
+flip-flops for the whole die, and the SRAM macros are a *separate* budget again, because
+ADR-0023 works out that the program memory is 2–4 KB before anything else is placed.
 
 ## Reproducing
 

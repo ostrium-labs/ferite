@@ -387,6 +387,70 @@ inputs, eight dedicated outputs, eight bidirectional pins, and the clock, the
 reset and the power enable are the die's. A design that wants twenty-five user
 pins does not fit, and the error says so by name.
 
+## 6c. The design is synthesised, and the block ciphers do not fit on the die
+
+The plan's week-1 gate has two halves: *"our DSL synthesises and places"*. The
+instantiation half is done (§6b). The synthesis half is now measured rather
+than asserted, and the answer is a finding.
+
+`crates/ferrite-lithic-corpus/tests/synthesis.rs` emits each design's Verilog,
+runs `synth -noabc` and `techmap` over it, and reads the cell counts back out
+of yosys's own `stat` output. The `graph_metrics.rs` file said of itself that
+gate count *"needs a different tool"*, and that is now the tool.
+
+**The three block ciphers do not fit on the die, by an order of magnitude.**
+The competition allows 24 tiles of about 1 000 logic cells each — roughly
+**24 000 cells for the whole die** — and:
+
+| Design | Gates | Multiple of the die's cell budget |
+|---|---:|---:|
+| `sha256` | 268 470 | 11.2× |
+| `aes` | 181 752 | 7.6× |
+| `chacha20` | 166 924 | 7.0× |
+
+`sha256` is 6 090 IR nodes and 268 470 gates. The ratio of 44 gates per node
+is the reason a node count can never be an area estimate: an unrolled SHA-256
+round is mostly `xor` and `and` on 32-bit words, and a 32-bit XOR is 32
+gates.
+
+**This is not a defect in the corpus.** The corpus exists to find defects in
+the *tools*, and it does that far better with a small design: `crc3` — 52
+gates, three flip-flops — found four defects that 471 tests of the tools had
+not. A 268 000-gate design would have found the same four and taken a
+thousand times longer to simulate.
+
+**What it establishes is a boundary on what the submission can be.** The
+designs that *would* fit are the small ones, and they are the
+protocol-shaped ones: `crc3` 52 gates, `memchr` 62, `hex` 70, `rle` 96,
+`crc32` 446, `dfa` 454, `aho_corasick` 712, and `packet` — a 64-byte frame
+header parser — 4 302, which is 18% of the logic budget. A RISC-V core at
+roughly 750 LUTs is a few thousand gates more. So a protocol emulator — a
+core, a pin and timing engine, a frame parser — fits the allocation with
+room to spare, and an accelerator for a block cipher does not.
+
+That is the same conclusion the plan reached from the other end, where the
+audit of Loams found *"the entire arithmetic core is roughly 200 lines across
+six functions"* and no ANN algorithm to accelerate. Two independent routes to
+one answer: the source has nothing worth accelerating, and the die has no
+room to accelerate it in.
+
+**And a second budget, which the gate count does not show.** `ghash` is 786
+flip-flops in 844 gates: 2.46 tiles of *register* budget, against `packet`'s
+2.06 for six times the gates. A flip-flop is a much larger cell than a gate,
+so a state-heavy design is expensive in a way the gate count does not show.
+The die's register budget is 24 × 320 = 7 680 flip-flops, and the SRAM is a
+third budget again (§6a).
+
+**The numbers are generic gates, not standard cells.** The IHP PDK's liberty
+files are not in this repository and are not installable from it, so there is
+no library to map to. The counts are of yosys's internal gate primitives, which
+makes them **comparable between designs** and **not convertible to an area**.
+The flip-flop count is the one that converts, because a flip-flop is a
+flip-flop in every library and the rules give the budget directly.
+
+The CI job `synth` installs yosys and fails if anything skipped, for the same
+reason the `cosim` job does.
+
 ## 7. The Loams core, honestly
 
 The ambition was Loams' core on silicon. The source does not support it.

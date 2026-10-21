@@ -1,14 +1,18 @@
 ---
 title: Benchmarks, measured
-description: Node counts, flop counts, bits of state and combinational depth for every corpus design, derived from the IR rather than estimated.
+description: Node counts, flop counts, bits of state, combinational depth and synthesised gate counts for every corpus design, derived from the IR and measured by a synthesiser rather than estimated.
 ---
 
 Every number on this page is **derived from the IR by one piece of code**, for every design,
-by the same method. Regenerate it:
+by the same method, or **measured by a synthesiser**. Regenerate them:
 
 ```sh
 cargo test -p ferrite-lithic-corpus --test graph_metrics -- --nocapture --ignored
+cargo test -p ferrite-lithic-corpus --test synthesis  -- --nocapture --ignored
 ```
+
+The second needs `yosys` on the PATH and prints a **SKIPPED** line without it, so a run
+that measured nothing is visible rather than hidden.
 
 The point of saying that first is that most hardware size figures in documentation are
 estimates written in a doc comment. They are honest as estimates and useless as
@@ -134,7 +138,93 @@ which is exactly the `crc3` and `hex` case.
 Against a modern CPU on the same data, with both free to use everything, a small
 straightforward circuit usually loses. That is a fact about transistors.
 
-## Three structural findings
+## Synthesised gate counts
+
+`tests/synthesis.rs` emits each design's Verilog, runs `synth -noabc` and `techmap` over
+it, and reads the cell counts back out of yosys's own `stat` output.
+
+**These are generic gates, not standard cells.** The IHP PDK's liberty files are not in
+this repository and are not installable from it, so there is no library to map to. The
+counts are of yosys's internal gate primitives. Three consequences, and the third is the
+one that matters:
+
+- The counts are **comparable between designs** — every design goes through the same
+  synthesis at the same settings.
+- They are **not an area figure**. A generic gate is not an IHP cell, and an IHP cell's
+  area varies by an order of magnitude across the library.
+- The **flip-flop count converts to a budget** and the gate count does not, because a
+  flip-flop is a flip-flop in every library and the rules give the budget directly: about
+  320 DFF per tile, 24 tiles, 7 680 flip-flops for the whole die.
+
+| design | variant | gates | flops | register tiles |
+|---|---|---:|---:|---:|
+| `crc3` | 3-bit CRC | 52 | 6 | 0.02 |
+| `crc32` | CRC-32 | 446 | 64 | 0.20 |
+| `ghash` | 128-bit field | 844 | 786 | 2.46 |
+| `sha256` | 64 unrolled rounds | 268 470 | 512 | 1.60 |
+| `chacha20` | one block/cycle | 166 924 | 1 024 | 3.20 |
+| `aes` | 200-arm S-box | 181 752 | 256 | 0.80 |
+| `hex` | 4 bits in, 8 out | 70 | 20 | 0.06 |
+| `base64` | 6 bits in, 8 out | 172 | 24 | 0.07 |
+| `memchr` | comparator | 62 | 34 | 0.11 |
+| `memchr` | 256-entry ROM | 58 | 34 | 0.11 |
+| `aho_corasick` | 19 states | 712 | 34 | 0.11 |
+| `dfa` | 5 states, 64 symbols | 454 | 22 | 0.07 |
+| `bitpack` | expander, w=8 | 2 296 | 12 | 0.04 |
+| `rle` | decoder | 96 | 32 | 0.10 |
+| `roaring` | bitmap | 1 936 | 136 | 0.42 |
+| `hamming` | popcount64 | 1 544 | 16 | 0.05 |
+| `sorting` | bitonic, n=8 | 2 832 | 128 | 0.40 |
+| `sketch` | 64-bit state | 1 782 | 128 | 0.40 |
+| `packet` | frame in/frame out | 4 302 | 658 | 2.06 |
+
+### 4. The block ciphers are an order of magnitude too big to fabricate
+
+The competition allows 24 tiles of about 1 000 logic cells each: **roughly 24 000 cells for
+the whole die.** The three block ciphers are over that *on their own*.
+
+| design | gates | multiple of the die's cell budget |
+|---|---:|---:|
+| `sha256` | 268 470 | 11.2× |
+| `aes` | 181 752 | 7.6× |
+| `chacha20` | 166 924 | 7.0× |
+
+`sha256` is 6 090 IR nodes and 268 470 gates. The ratio of 44 gates per node is the reason
+a node count can never be an area estimate: an unrolled SHA-256 round is mostly `xor` and
+`and` on 32-bit words, and a 32-bit XOR is 32 gates.
+
+**None of this is a defect in the corpus.** The corpus exists to find defects in the
+*tools*, and it does that far better with a small design — `crc3`, 52 gates and three
+flip-flops, found four defects that 471 tests of the tools had not. A 268 000-gate design
+would have found the same four and taken a thousand times longer to simulate.
+
+What it does establish is a boundary on what a chip can be. The designs that *would* fit
+are the small ones, and they are the protocol-shaped ones:
+
+| design | gates | share of the die's cell budget |
+|---|---:|---:|
+| `crc3` | 52 | 0.2% |
+| `memchr` | 62 | 0.3% |
+| `hex` | 70 | 0.3% |
+| `rle` | 96 | 0.4% |
+| `crc32` | 446 | 1.9% |
+| `dfa` | 454 | 1.9% |
+| `aho_corasick` | 712 | 3.0% |
+| `packet` — a frame parser | 4 302 | 17.9% |
+
+`packet` is the interesting one: a 64-byte frame header parser is 18% of the logic budget.
+A RISC-V core at roughly 750 LUTs is a few thousand gates more. So a protocol emulator — a
+core, a pin and timing engine, a frame parser — fits the allocation with room to spare, and
+an accelerator for a block cipher does not.
+
+### 5. `ghash` is a register design, and that is a different cost
+
+`ghash` is 786 flip-flops in 844 gates. It is 2.46 tiles of *register* budget while
+`packet` — six times the gates — is 2.06. A flip-flop is a much larger cell than a gate,
+so a state-heavy design is expensive in a way the gate count does not show, and the two
+budgets have to be checked separately.
+
+## Five structural findings
 
 ### 1. `mem bits` is zero everywhere, which is the memory gap with evidence behind it
 
@@ -185,6 +275,9 @@ The claim that survives needs no wall clock at all:
 # Structural metrics, all 24 design/variant pairs. Deterministic, no timing.
 cargo test -p ferrite-lithic-corpus --test graph_metrics -- --nocapture --ignored
 
+# Synthesised gate counts. Needs yosys; prints SKIPPED without it.
+cargo test -p ferrite-lithic-corpus --test synthesis -- --nocapture --ignored
+
 # Design cycles per unit vs the reference crate's wall clock, at a stated 1 GHz.
 cargo test -p ferrite-lithic-corpus --test speed --release -- --nocapture --ignored
 ```
@@ -201,8 +294,11 @@ did nothing would be green and meaningless.
 
 Stated plainly, because a benchmarks page that only lists wins is marketing:
 
-- **Area and power.** Not derivable from the IR.
-- **Frequency.** Would need a synthesis flow and a target process.
+- **Area.** The gate counts above are generic gates, not standard cells. Converting them
+  needs the IHP PDK's liberty files, which are not in this repository. The flip-flop
+  count converts, because a flip-flop is a flip-flop in every library.
+- **Power.** Not derivable without a library and an activity factor.
+- **Frequency.** Would need a target process and a timing report.
 - **Throughput per design, uniformly.** Only some designs have a cycle-rate assertion
   (`deflate` at exactly 9 cycles per byte, `aes` at one block per cycle, `hex` at 4 bits per
   cycle, `huffman` at one symbol per code length). Building a fair rate benchmark for the

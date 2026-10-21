@@ -118,6 +118,41 @@ jobs:
           fi
           echo "every gated test ran"
 
+  # The synthesis gate.
+  #
+  # A hardware DSL is judged on the Verilog it emits, and a Verilog file that
+  # has never been through a synthesiser is a file whose *size* nobody has
+  # measured. The node counts in the graph are not gate counts — an `add` is one
+  # node and forty gates — so the area question needs the tool that answers it.
+  #
+  # The job asserts that nothing skipped, for the same reason the cosim job
+  # does: a synthesis run that did not happen proves nothing, and says so in
+  # its output.
+  synth:
+    name: synth (yosys)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install yosys
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y yosys
+      - name: tool version
+        run: yosys -V
+      - name: synthesise every corpus design
+        run: |
+          set -o pipefail
+          cargo test -p ferrite-lithic-corpus --test synthesis --all-features --locked \
+            -- --ignored --nocapture 2>&1 | tee /tmp/synthesis.txt
+      - name: nothing may have skipped
+        run: |
+          if grep -q SKIPPED /tmp/synthesis.txt; then
+            echo "::error::the synthesis gate skipped, so this job proved nothing"
+            grep -n SKIPPED /tmp/synthesis.txt
+            exit 1
+          fi
+          echo "every design was synthesised"
+
   deny:
     name: supply chain
     runs-on: ubuntu-latest
