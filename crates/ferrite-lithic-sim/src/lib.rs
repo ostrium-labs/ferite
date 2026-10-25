@@ -98,15 +98,15 @@
 
 #![doc(html_root_url = "https://docs.rs/ferrite-lithic-sim/0.0.1")]
 
-/// The README's examples, compiled and run as doctests.
+/// The implementation guide's examples, compiled and run as doctests.
 ///
 /// They live here rather than on the front-end crate because this is the only crate
-/// whose *dev*-dependencies cover every crate the README mentions, so it is the
+/// whose *dev*-dependencies cover every crate the guide mentions, so it is the
 /// only one where every example in the file can resolve its imports. A crate needs a
 /// target for `include_str!` to hang them off, and an unused private struct is the
 /// cheapest one.
 #[cfg(doctest)]
-#[doc = include_str!("../../../README.md")]
+#[doc = include_str!("../../../docs/lithic-guide.md")]
 struct ReadmeExamples;
 
 mod compile;
