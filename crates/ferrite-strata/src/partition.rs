@@ -44,7 +44,7 @@
 //! cannot do is produce an *unacceptable* partition, because every accepted
 //! pattern was checked before absorption.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::backend::Backend;
 use crate::capabilities::SupportLevel;
@@ -447,15 +447,39 @@ impl<'a> Partitioner<'a> {
 
     fn fits(&self, graph: &Graph, backend: usize, nodes: &[NodeId]) -> bool {
         let limits = &self.backends[backend].capabilities().capabilities().limits;
-        let partition = self.build_partition(graph, backend, nodes);
-        self.max_partition_bytes
-            .is_none_or(|limit| partition.bytes <= limit)
-            && limits
-                .max_graph_bytes
-                .is_none_or(|limit| partition.bytes as u64 <= limit)
-            && limits
-                .max_nodes
-                .is_none_or(|limit| nodes.len() as u64 <= limit)
+        if limits
+            .max_nodes
+            .is_some_and(|limit| nodes.len() as u64 > limit)
+        {
+            return false;
+        }
+        let Some(limit) = self
+            .max_partition_bytes
+            .map(|bytes| bytes as u64)
+            .into_iter()
+            .chain(limits.max_graph_bytes)
+            .min()
+        else {
+            return true;
+        };
+        let mut seen = HashSet::new();
+        let mut bytes = 0u64;
+        for &node in nodes {
+            for value in graph
+                .node(node)
+                .operands()
+                .iter()
+                .chain(&graph.node(node).outputs)
+            {
+                if seen.insert(*value) {
+                    bytes = bytes.saturating_add(graph.value(*value).byte_len() as u64);
+                    if bytes > limit {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
     }
 
     fn is_convex(graph: &Graph, members: &[NodeId]) -> bool {
