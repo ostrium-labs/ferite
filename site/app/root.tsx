@@ -26,11 +26,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
         <link rel="icon" type="image/png" sizes="32x32" href="/brand/favicon-32.png" />
         <link rel="apple-touch-icon" sizes="180x180" href="/brand/apple-touch-icon.png" />
-        <meta property="og:site_name" content="Ferrite Lithic" />
+        <meta property="og:site_name" content="ferite" />
         <meta property="og:image" content="https://ferrite.ostriumlabs.org/brand/og-ferrite.png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta property="og:image:alt" content="ferrite-lithic. Hardware you write in Rust, as real gates. One graph. Two backends. One clock." />
+        <meta property="og:image:alt" content="ferite. Verified hardware and vendor-neutral accelerator execution." />
         <meta name="twitter:card" content="summary_large_image" />
         <meta name="twitter:image" content="https://ferrite.ostriumlabs.org/brand/og-ferrite.png" />
         <Meta />

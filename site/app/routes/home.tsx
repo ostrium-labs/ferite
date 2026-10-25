@@ -30,11 +30,11 @@ const HERO_DURATION = 2200;
 
 export function meta() {
   return [
-    { title: "Ferrite Lithic — an embedded hardware DSL in Rust" },
+    { title: "ferite — Lithic hardware + Strata runtime" },
     {
       name: "description",
       content:
-        "An embedded hardware DSL, a cycle simulator and a Verilog emitter, written in Rust. Hardcaml's model, reimplemented natively. A corpus of independently checked algorithms, each checked three ways.",
+        "Verified hardware and vendor-neutral accelerator execution in one Rust monorepo. Explore Lithic, Strata and their workload-driven feedback loop.",
     },
   ];
 }
@@ -197,25 +197,33 @@ export default function Home() {
   return (
     <>
       <header className="hero shell">
-        <div className="hero__provenance"><span className="hero__identity"><FerriteAnimatedMark /><span>ferrite-lithic</span></span><a href={`${SOURCE_ROOT}README.md`}>Apache-2.0 / source & verification</a></div>
+        <div className="hero__provenance"><span className="hero__identity"><FerriteAnimatedMark /><span>ferite</span></span><a href={`${SOURCE_ROOT}README.md`}>Apache-2.0 / source & verification</a></div>
         <div className="hero__inner page-grid">
           <div className="hero__copy">
             <h1 className="hero__title"><span>Hardware you write</span><span>in Rust, as real gates.</span></h1>
-            <p className="lede">An embedded hardware DSL, a cycle simulator and a Verilog emitter. Build one graph in Rust. Check that both backends agree on every clock edge.</p>
+            <p className="lede">One Ferrite monorepo. Lithic builds and verifies hardware in Rust; Strata partitions inference graphs and runs backend subgraphs with CPU fallback.</p>
             <div className="landing-cta"><Link className="cta-button cta-button--primary" to="/docs">Explore the toolchain</Link><Link className="cta-button" to="/docs/basics">Start with circuit basics →</Link></div>
-            <p className="hero__lineage">Hardcaml’s model, implemented natively in Rust.</p>
+            <p className="hero__lineage">Hardcaml’s circuit model, alongside a vendor-neutral runtime.</p>
           </div>
           <Hero />
           <dl className="stats">
-            <Stat label="tests / recorded snapshot" value={PROJECT_STATS.tests} note="unit, integration and documentation tests" />
+            <Stat label="Lithic tests / recorded snapshot" value={PROJECT_STATS.tests} note="historical unit, integration and documentation tests" />
             <Stat label="corpus algorithms" value={PROJECT_STATS.designs} note={`${PROJECT_STATS.tiers} tiers, ${PROJECT_STATS.checksPerDesign} complementary checks`} />
-            <Stat label="crates" value={PROJECT_STATS.crates} note="nine tools and one adversarial corpus" />
+            <Stat label="Lithic crates" value={PROJECT_STATS.crates} note="plus four Strata crates in the shared workspace" />
             <Stat label="Verilator coverage" value={PROJECT_STATS.cosimCoverage} suffix="%" note="recorded corpus equivalence coverage" />
           </dl>
         </div>
       </header>
 
       <div className="landing-chapters">
+        <section className="section" id="ouroboros">
+          <h2>Lithic ↔ Strata: the ouroboros loop</h2>
+          <div className="prose">
+            <p>Strata workloads and CPU-reference outputs guide Lithic hardware. Verified circuits and measured resource limits can then guide Strata backend capabilities and placement. Runtime gaps feed the next hardware revision.</p>
+            <p>Both halves now share sixteen crates, one Cargo workspace and this site. The loop is a co-design direction, not a circular dependency: a Lithic-backed Strata backend and device transport are still planned.</p>
+            <p><Link to="/docs/ouroboros">Follow the feedback loop →</Link>{" · "}<Link to="/docs/strata">Explore the Strata runtime →</Link></p>
+          </div>
+        </section>
         <section className="section" id="what">
           <h2>A library, not a language</h2>
           <div className="prose">
@@ -306,7 +314,7 @@ design.emit_verilog("top");              // structural`}
         </section>
 
         <section className="section" id="crates">
-          <h2>Ten crates, in dependency order</h2>
+          <h2>The Lithic crates, in dependency order</h2>
           <p className="prose">
             Small crates with explicit contracts. Inspect the production dependencies, then
             follow the walkthroughs in reading order. Test counts are the recorded snapshot.
@@ -502,10 +510,11 @@ design.emit_verilog("top");              // structural`}
 
       <footer className="footer">
         <p>
-          Ferrite Lithic — Apache-2.0. An embedded hardware DSL in Rust, with a verified
-          corpus that keeps finding bugs the tools' own tests could not.
+          ferite, Apache-2.0. Verified hardware and a vendor-neutral
+          accelerator runtime, in one Rust workspace.
         </p>
         <p className="footer__meta">
+          Lithic recorded snapshot:{" "}
           {PROJECT_STATS.tests} tests, {PROJECT_STATS.designs} designs, {PROJECT_STATS.tiers} tiers, {PROJECT_STATS.crates} crates. MIT-licensed dependencies audited with{" "}
           <code>cargo deny</code>.
         </p>

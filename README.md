@@ -1,15 +1,26 @@
-Ferrite Lithic
-==============
+ferite
+======
 
-![ferrite-lithic — Hardware you write in Rust, as real gates](site/public/brand/readme-banner.svg)
+![ferite — Lithic hardware and Strata runtime](site/public/brand/readme-banner.svg)
 
-An embedded hardware DSL, a cycle simulator, and an RTL generator, in Rust.
+A Rust monorepo for verified hardware and vendor-neutral accelerator execution.
+**Lithic** builds, simulates and emits hardware. **Strata** partitions inference
+graphs, compiles backend subgraphs and executes them with CPU fallback.
+
+Both live in `crates/`, share one Cargo workspace, lockfile, CI and
+[documentation site](site/README.md). Existing crate names remain unchanged.
+Start with the [monorepo and feedback-loop guide](docs/monorepo.md) or the
+[Strata guide](docs/strata/README.md).
 
 Hardcaml's model, reimplemented natively. Not a wrapper, not a binding, not a
 transpiler from another language: a Rust library you call from Rust.
 
-Status
-------
+Lithic status
+-------------
+
+The implementation history, recorded test counts and benchmarks below describe
+Lithic. For current Strata scope and the planned integration boundary, see the
+[monorepo guide](docs/monorepo.md).
 
 **Phases A1 through A3 are implemented and tested.** That is every crate in the
 layout table below, all nine of them green on their own: the bits crate, the IR,
@@ -771,10 +782,12 @@ static shapes, not general program synthesis.
 Relationship to Strata
 ----------------------
 
-The FPGA path in [`ferrite-strata`](../ferrite-strata) is implemented as a
-Strata backend: graph in, bitstream out. That backend is the first real test of
-Strata's closed-vendor-plugin idea, because Lithic behaves like a vendor with
-its own architecture and its own compiler.
+Lithic and [Strata](docs/strata/README.md) form an intended ouroboros loop:
+Strata workloads and CPU-reference results guide Lithic hardware; verified
+hardware measurements then inform Strata backend capabilities and placement.
+The shared workspace implements both toolchains, not a hardware adapter between
+them. A Lithic-backed Strata backend, tensor-to-circuit lowering and device
+execution are still planned. See [the contract and limits](docs/monorepo.md).
 
 Licence
 -------

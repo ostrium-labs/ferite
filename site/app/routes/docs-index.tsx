@@ -3,7 +3,7 @@ import { DOCS, type DocEntry } from "../content/pages";
 import { DOC_GROUPS, DOC_NAV } from "../content/navigation";
 
 export function meta() {
-  return [{ title: "Documentation — Ferrite Lithic" }, { name: "description", content: `${DOCS.length} pages covering concepts, toolchain, corpus, findings and measured benchmarks.` }];
+  return [{ title: "Documentation — ferite" }, { name: "description", content: `${DOCS.length} pages covering Lithic hardware, Strata execution, their feedback loop, corpus and measured benchmarks.` }];
 }
 
 function Entry({ entry }: { entry: DocEntry }) {
@@ -27,11 +27,12 @@ export default function DocsIndex() {
     </nav>
     <article className="doc doc--index">
       <header className="doc-header">
-        <nav className="breadcrumb" aria-label="Breadcrumb"><Link className="breadcrumb__link" to="/">Ferrite Lithic</Link><span aria-hidden="true">/</span><span>Documentation</span></nav>
-        <h1 className="doc-header__title">A map of the toolchain.</h1>
-        <div className="doc__lede"><p>Learn the circuit model. Follow the graph through two backends. Then inspect the evidence that keeps them honest.</p></div>
+        <nav className="breadcrumb" aria-label="Breadcrumb"><Link className="breadcrumb__link" to="/">ferite</Link><span aria-hidden="true">/</span><span>Documentation</span></nav>
+        <h1 className="doc-header__title">A map of ferite.</h1>
+        <div className="doc__lede"><p>Follow Lithic from circuit to verified RTL, Strata from tensor graph to execution, and the feedback loop connecting their design.</p></div>
       </header>
       <div className="learning-entries" aria-label="Choose a starting point">
+        <Link to="/docs/ouroboros"><span>How do both halves fit?</span><strong>Follow the ouroboros loop</strong><span>Strata workloads ↔ Lithic hardware →</span></Link>
         <Link to="/docs/basics"><span>New to hardware?</span><strong>Start with one clock edge</strong><span>Values, state and the meaning of a cycle →</span></Link>
         <Link to="/docs/bits"><span>Ready to build?</span><strong>Follow a value into the graph</strong><span>Bits → IR → Design → backends</span></Link>
         <Link to="/docs/findings"><span>Evaluating the project?</span><strong>Inspect the defects it caught</strong><span>Independent references and measured limits →</span></Link>

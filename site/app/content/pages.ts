@@ -33,6 +33,9 @@ import Ocam from "../../content/docs/ocaml.mdx";
 import HardcamlPage from "../../content/docs/hardcaml.mdx";
 import WhyRust from "../../content/docs/why-rust.mdx";
 import Benchmarks from "../../content/docs/benchmarks.mdx";
+import Ouroboros from "../../content/docs/ouroboros.mdx";
+import Strata from "../../content/docs/strata.mdx";
+import StrataPlugins from "../../content/docs/strata-plugins.mdx";
 
 export interface DocEntry extends Omit<DocNavigation, "label"> {
   label?: string;
@@ -46,7 +49,7 @@ export interface DocEntry extends Omit<DocNavigation, "label"> {
   tests?: number;
   order: number;
   /** Either an MDX component or a typed page. */
-  section: "background" | "crates" | "corpus" | "benchmarks";
+  section: DocNavigation["section"];
   kind: "mdx" | "data";
   Component?: ComponentType<{ components?: typeof mdxComponents }>;
   page?: Page;
@@ -60,6 +63,9 @@ export interface DocEntry extends Omit<DocNavigation, "label"> {
  * emitter prints one.
  */
 const MDX_PAGES: DocEntry[] = [
+  { slug: "ouroboros", title: "One Ferrite, two directions", description: "The Lithic–Strata ouroboros: a shared workspace and a workload-driven hardware feedback loop, without circular dependencies.", order: 0, section: "strata", kind: "mdx", Component: Ouroboros },
+  { slug: "strata", title: "Strata: from graph to numbers", description: "The tensor graph, capability-driven partitioning, CPU reference backend and host execution in the Ferrite monorepo.", order: 1, section: "strata", kind: "mdx", Component: Strata },
+  { slug: "strata-plugins", title: "The backend and plugin boundary", description: "Subgraph-level compilation, explicit decline and the versioned C ABI: what exists and what remains planned.", order: 2, section: "strata", kind: "mdx", Component: StrataPlugins },
   {
     slug: MDX_SLUGS.basics,
     title: "How a circuit becomes a value",

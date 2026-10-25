@@ -5,6 +5,7 @@ const BASE = process.env.SITE_BASE_URL || "http://127.0.0.1:5173";
 
 const ROUTES = [
   "/", "/docs",
+  "/docs/ouroboros", "/docs/strata", "/docs/strata-plugins",
   "/docs/basics", "/docs/ocaml", "/docs/hardcaml", "/docs/why-rust", "/docs/benchmarks",
   "/docs/bits", "/docs/ir", "/docs/design", "/docs/sim", "/docs/rtl",
   "/docs/derive", "/docs/wave", "/docs/cosim", "/docs/tb",
@@ -55,11 +56,11 @@ for (const route of ROUTES) {
     problems.push(`header marks ${info.barCurrent} sections, want exactly 1`);
   }
   if (route.startsWith("/docs/") && route !== "/docs") {
-    if (info.sidebar !== 18) problems.push(`sidebar ${info.sidebar}, want 18`);
+    if (info.sidebar !== ROUTES.length - 2) problems.push(`sidebar ${info.sidebar}, want ${ROUTES.length - 2}`);
     if (!info.current) problems.push("no current item");
     if (!info.next && !["/docs/findings", "/docs/benchmarks"].includes(route)) problems.push("no next link");
   }
-  if (route === "/docs" && info.cards !== 16) problems.push(`${info.cards} cards, want 16`);
+  if (route === "/docs" && info.cards !== ROUTES.length - 2) problems.push(`${info.cards} cards, want ${ROUTES.length - 2}`);
   if (["/docs/basics", "/docs/ocaml", "/docs/hardcaml", "/docs/why-rust", "/docs/benchmarks"].includes(route)) {
     if (info.shiki === 0) problems.push("no highlighted code — MDX/Shiki did not run");
     // `benchmarks` is a reference page, not a numbered walkthrough, so no steps is right.
@@ -78,9 +79,9 @@ for (const route of ROUTES) {
 
 // Follow prev/next through the whole order.
 const page = await browser.newPage();
-await page.goto(`${BASE}/docs/basics`, { waitUntil: "networkidle" });
-const seen = ["basics"];
-for (let i = 0; i < 20; i += 1) {
+await page.goto(`${BASE}${ROUTES[2]}`, { waitUntil: "networkidle" });
+const seen = [ROUTES[2].replace("/docs/", "")];
+for (let index = 0; index < ROUTES.length; index += 1) {
   const href = await page.evaluate(() =>
     document.querySelector(".doc-footer__link--next")?.getAttribute("href") ?? null);
   if (!href) break;
@@ -89,7 +90,7 @@ for (let i = 0; i < 20; i += 1) {
   seen.push(href.replace("/docs/", ""));
 }
 console.log(`\nchain (${seen.length}): ${seen.join(" -> ")}`);
-if (seen.length !== 16) { failures += 1; console.log(`FAIL chain length ${seen.length}, want 16`); }
+if (seen.length !== ROUTES.length - 2) { failures += 1; console.log(`FAIL chain length ${seen.length}, want ${ROUTES.length - 2}`); }
 
 // Canvas behaviour. Two different contracts, so two different assertions:
 //   the hero draws once and then HOLDS (a looping hero competes with the text below it),

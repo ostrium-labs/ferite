@@ -7,10 +7,14 @@ version = "0.0.1"
 edition = "2024"
 rust-version = "1.97"
 license = "Apache-2.0"
-repository = "https://github.com/ostrium-labs/ferrite-lithic"
+repository = "https://github.com/ostrium-labs/ferite"
 authors = ["Dinakaran V <112177746+dina-kar@users.noreply.github.com>"]
 
 [workspace.dependencies]
+ferrite-strata = { path = "crates/ferrite-strata", version = "0.0.1" }
+ferrite-strata-runtime = { path = "crates/ferrite-strata-runtime", version = "0.0.1" }
+ferrite-strata-cpu = { path = "crates/ferrite-strata-cpu", version = "0.0.1" }
+ferrite-strata-plugin-api = { path = "crates/ferrite-strata-plugin-api", version = "0.0.1" }
 ferrite-lithic = { path = "crates/ferrite-lithic", version = "0.0.1" }
 ferrite-lithic-bits = { path = "crates/ferrite-lithic-bits", version = "0.0.1" }
 proptest = "1"

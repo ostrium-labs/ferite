@@ -11,9 +11,9 @@ export function loader({ params }: Route.LoaderArgs) {
 }
 
 export function meta({ loaderData }: Route.MetaArgs) {
-  if (!loaderData) return [{ title: "Page not found — Ferrite Lithic" }];
+  if (!loaderData) return [{ title: "Page not found — ferite" }];
   return [
-    { title: `${loaderData.title} — Ferrite Lithic` },
+    { title: `${loaderData.title} — ferite` },
     { name: "description", content: loaderData.description },
   ];
 }

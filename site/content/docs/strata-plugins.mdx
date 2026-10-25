@@ -1,0 +1,52 @@
+## Subgraphs, not individual kernel calls
+
+Strata's vendor interface is coarse enough for a backend to own fusion,
+scheduling and internal architecture. The host supplies a subgraph; the backend
+returns an opaque executable or declines. Tensor data crosses the boundary,
+but a vendor does not have to expose its ISA or kernel source.
+
+## Capabilities before compilation
+
+A backend declares supported patterns, dtypes, shape classes and resource limits.
+The planner asks whether a pattern is supported before requesting compilation.
+Those declarations are a placement contract, not a benchmark or an assurance that
+any possible subgraph will compile.
+
+Compilation has three outcomes: compiled, declined, or error. Decline is a
+first-class normal result so the runtime can route around unsupported work.
+An actual compiler or execution failure must not be disguised as support.
+
+## Rust inside; a C ABI at the vendor boundary
+
+Rust trait objects are not a stable shared-library ABI. The
+`ferrite-strata-plugin-api` crate supplies versioned C-compatible declarations,
+wire encodings, and a host-side loader. Opaque handles and allocator ownership
+keep memory from being freed by the wrong side.
+
+Rust ABI declarations are available today. A matching C header and its conformance
+tests are not shipped yet, so the non-Rust vendor integration route remains
+unavailable rather than requiring vendors to reconstruct the ABI themselves.
+
+Loading a plugin still executes arbitrary native code. Wire bounds checks and
+version checks are not a sandbox. Only load trusted libraries.
+
+## The future Lithic adapter
+
+A hardware adapter would depend on both crate families. It must lower an accepted
+tensor subgraph into a circuit, verify results against CPU reference outputs,
+provide device transport, and advertise only implemented patterns and measured
+limits. It must decline everything outside that boundary.
+
+None of that adapter is supplied by this merge. The
+[ouroboros guide](/docs/ouroboros) describes the intended feedback loop without
+claiming a current FPGA backend.
+
+## Decisions and source
+
+- [Plugin ABI, wire format and loader](https://github.com/ostrium-labs/ferite/blob/dev/crates/ferrite-strata-plugin-api/src/lib.rs)
+- [Strata ADRs](https://github.com/ostrium-labs/ferite/tree/dev/docs/strata/adr)
+- [Strata design notes](https://github.com/ostrium-labs/ferite/blob/dev/docs/strata/design-notes.md)
+
+The Strata dependency-policy gate remains in the shared CI: the default build
+must not acquire a GPU backend, and ambiguous NVIDIA dependency names are
+rejected. Consolidation does not weaken those policies.

@@ -3,7 +3,7 @@
 //! # Why goldens and not a simulator
 //!
 //! The design notes keep snapshot tests on emitted Verilog
-//! ([`docs/design-notes.md`](https://github.com/ostrium-labs/ferrite-lithic/blob/dev/docs/design-notes.md)
+//! ([`docs/design-notes.md`](https://github.com/ostrium-labs/ferite/blob/dev/docs/design-notes.md)
 //! §6) and *substitute* for Hardcaml's golden waveforms, because those are ASCII
 //! renders from a proprietary external library. So: compare text.
 //!

@@ -11,7 +11,7 @@ export interface FerriteMarkProps {
 export function FerriteMark({ size = 24, variant = 'primary', decorative = false, className = '' }: FerriteMarkProps) {
   return <svg xmlns="http://www.w3.org/2000/svg" viewBox={MARK.viewBox} width={size} height={size}
     className={`ferrite-mark ferrite-mark--${variant} ${className}`} style={{ '--mark-size': typeof size === 'number' ? `${size}px` : size } as CSSProperties}
-    role={decorative ? undefined : 'img'} aria-hidden={decorative || undefined} aria-label={decorative ? undefined : 'Ferrite Lithic — Verified Edge'} focusable="false">
+    role={decorative ? undefined : 'img'} aria-hidden={decorative || undefined} aria-label={decorative ? undefined : 'ferite — Verified Edge'} focusable="false">
     <path className="ferrite-mark__branch" d={MARK.branch} fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="miter" />
     <rect className="ferrite-mark__input" {...MARK.input} />
     <rect className="ferrite-mark__upper" {...MARK.upper} />

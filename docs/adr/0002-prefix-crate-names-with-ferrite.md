@@ -27,7 +27,7 @@ namespace and search.
 
 ## Decision
 
-Repositories `ostrium-labs/ferrite-lithic` and `ostrium-labs/ferrite-strata`.
+Repositories `ostrium-labs/ferite` and `ostrium-labs/ferrite-strata`.
 Crates `ferrite-lithic`, `-bits`, `-ir`, `-sim`, `-rtl`, `-derive`, `-wave`,
 `-cosim`, `-tb`, and `ferrite-strata`, `-runtime`, `-plugin-api`, `-cpu`,
 `-cubecl`, `-pytorch`. Repository and crate names match so the suite reads as one.

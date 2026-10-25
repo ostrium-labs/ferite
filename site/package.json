@@ -1,5 +1,5 @@
 {
-  "name": "ferrite-lithic-site",
+  "name": "ferite-site",
   "private": true,
   "version": "1.0.0",
   "type": "module",
@@ -10,7 +10,7 @@
     "deploy": "wrangler deploy",
     "preview": "wrangler dev --local",
     "typecheck": "react-router typegen && tsc",
-    "test": "node ticker.test.mjs && node demos.test.mjs"
+    "test": "node ticker.test.mjs && node demos.test.mjs && node --test monorepo.test.mjs"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
@@ -22,7 +22,7 @@
     "vite": "^8.3.0",
     "wrangler": "^4.147.0"
   },
-  "description": "Animated explainer for Ferrite Lithic, an embedded hardware DSL in Rust.",
+  "description": "ferite: Lithic verified hardware and the Strata accelerator runtime.",
   "dependencies": {
     "@react-router/dev": "^8.4.0",
     "@react-router/node": "^8.4.0",

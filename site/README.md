@@ -1,13 +1,16 @@
-# ferrite-lithic-site
+# ferite site
 
-The documentation site for [Ferrite Lithic](../README.md): an embedded hardware DSL
-in Rust, with a corpus of twenty-one real algorithms that are each checked three ways.
+The shared documentation site for [ferite](../README.md).
+Lithic covers verified hardware; Strata covers the accelerator runtime, CPU
+reference and plugin boundary. Start at `/docs/ouroboros` for their feedback loop
+and the distinction between implemented code and the planned hardware adapter.
 
 ## What it is
 
 A [React Router 8](https://reactrouter.com) app in framework mode, with
-[`fumadocs-mdx`](https://fumadocs.dev) as the content layer. Three route patterns own eighteen
-documentation pages plus the landing page.
+[`fumadocs-mdx`](https://fumadocs.dev) as the content layer. Three route patterns own
+21 documentation pages plus the landing page, including the ouroboros, Strata
+runtime and plugin-boundary guides.
 
 ```
 /                      the landing page: one argument, made with a timing diagram
@@ -62,11 +65,11 @@ npm run typecheck  # react-router typegen && tsc
 
 The build prerenders the landing page, documentation index, and every documentation
 slug into `build/client`. `wrangler.jsonc` deploys these as static assets to the
-`ferrite` Worker; no runtime server is required. Documentation paths are shared with
+`ferite` Worker; no runtime server is required. Documentation paths are shared with
 the canonical navigation in `app/content/navigation.ts`, via `app/content/paths.ts`.
 Add new documents to that navigation and the content registry.
 
-Connect `ostrium-labs/ferrite-lithic` in Cloudflare Workers Builds with:
+Connect `ostrium-labs/ferite` in Cloudflare Workers Builds with:
 
 | Setting | Value |
 |---|---|
@@ -74,7 +77,7 @@ Connect `ostrium-labs/ferrite-lithic` in Cloudflare Workers Builds with:
 | Root directory | `site` |
 | Build command | `npm run build` |
 | Deploy command | `npx wrangler deploy` |
-| Build token | Existing `ostrium build token`, if it permits deploying `ferrite` |
+| Build token | Existing `ostrium build token`, if it permits deploying `ferite` |
 
 The committed npm lockfile selects npm for dependency installation. Enable automatic
 builds on pushes to the production branch. The token needs permission to edit Workers
