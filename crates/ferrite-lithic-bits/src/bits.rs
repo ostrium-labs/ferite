@@ -76,7 +76,7 @@ pub const fn mask_for_width(width: u32) -> u64 {
 ///
 /// # Widths are runtime values
 ///
-/// See [ADR-0003](https://github.com/ostrium-labs/ferrite-lithic/blob/dev/docs/adr/0003-runtime-widths-not-const-generics.md).
+/// See [ADR-0003](https://github.com/ostrium-labs/ferite/blob/dev/docs/adr/0003-runtime-widths-not-const-generics.md).
 /// Width mismatches are therefore runtime errors, not compile errors, and the
 /// messages in [`Error`] carry the compensation.
 ///

@@ -47,7 +47,7 @@ pub enum Error {
     /// The same node is listed as both an input and an output port.
     ///
     /// That is an `inout` in Verilog, and this emitter does not model tri-state
-    /// ([the design notes](https://github.com/ostrium-labs/ferrite-lithic/blob/dev/docs/design-notes.md)
+    /// ([the design notes](https://github.com/ostrium-labs/ferite/blob/dev/docs/design-notes.md)
     /// record it as deliberately not ported). Listing it twice is refused rather
     /// than emitted as a port with two directions.
     PortIsBothDirections {

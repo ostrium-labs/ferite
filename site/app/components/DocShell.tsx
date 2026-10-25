@@ -51,7 +51,7 @@ function Breadcrumb({ entry }: { entry: DocEntry }) {
   return (
     <nav className="breadcrumb" aria-label="Breadcrumb">
       <Link className="breadcrumb__link" to="/">
-        Ferrite Lithic
+        ferite
       </Link>
       <span className="breadcrumb__sep">/</span>
       <Link className="breadcrumb__link" to="/docs">

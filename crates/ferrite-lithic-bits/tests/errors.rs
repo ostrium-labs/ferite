@@ -1,6 +1,6 @@
 //! Error message quality.
 //!
-//! [ADR-0003](https://github.com/ostrium-labs/ferrite-lithic/blob/dev/docs/adr/0003-runtime-widths-not-const-generics.md)
+//! [ADR-0003](https://github.com/ostrium-labs/ferite/blob/dev/docs/adr/0003-runtime-widths-not-const-generics.md)
 //! trades compile-time width checking for runtime widths, and requires the error
 //! message to carry the compensation a compiler would have provided. These tests
 //! are the enforcement mechanism for that requirement: if someone shortens a

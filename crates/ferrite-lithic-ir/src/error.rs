@@ -2,7 +2,7 @@
 //!
 //! # Why this type is as verbose as the one in `ferrite-lithic-bits`
 //!
-//! Widths are runtime values ([ADR-0003](https://github.com/ostrium-labs/ferrite-lithic/blob/dev/docs/adr/0003-runtime-widths-not-const-generics.md)),
+//! Widths are runtime values ([ADR-0003](https://github.com/ostrium-labs/ferite/blob/dev/docs/adr/0003-runtime-widths-not-const-generics.md)),
 //! so a width mismatch during graph construction is a *runtime* event rather than
 //! a compile error. Graph construction is loops and generators, which is exactly
 //! where const generics hurt, so the trade is worth making — but it means the

@@ -53,7 +53,7 @@
 //! canonical. What is left to decide is which name each node gets, and that is the
 //! three-state rule: ports first, then explicitly named signals, then unnamed ones
 //! in graph order. Unnamed signals are named for their node kind and collisions
-//! append a numeric suffix; see [`tests/naming.rs`](https://github.com/ostrium-labs/ferrite-lithic/blob/dev/crates/ferrite-lithic-rtl/tests/naming.rs)
+//! append a numeric suffix; see [`tests/naming.rs`](https://github.com/ostrium-labs/ferite/blob/dev/crates/ferrite-lithic-rtl/tests/naming.rs)
 //! for the whole contract, asserted against the emitted text.
 //!
 //! # One module per circuit, deduplicated by name

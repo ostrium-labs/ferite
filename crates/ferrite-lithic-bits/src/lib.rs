@@ -10,13 +10,13 @@
 //! Every claim about Hardcaml's behaviour was read from source with `file:line`
 //! citations rather than taken from its manual, and several of them contradict
 //! what the original plan assumed. See
-//! [`docs/design-notes.md`](https://github.com/ostrium-labs/ferrite-lithic/blob/dev/docs/design-notes.md)
+//! [`docs/design-notes.md`](https://github.com/ostrium-labs/ferite/blob/dev/docs/design-notes.md)
 //! for the full audit.
 //!
 //! # What is inherited deliberately
 //!
 //! - **Widths are runtime `u32`, not const generics**
-//!   ([ADR-0003](https://github.com/ostrium-labs/ferrite-lithic/blob/dev/docs/adr/0003-runtime-widths-not-const-generics.md)).
+//!   ([ADR-0003](https://github.com/ostrium-labs/ferite/blob/dev/docs/adr/0003-runtime-widths-not-const-generics.md)).
 //!   A hardware DSL is mostly loops and generators, which const generics make
 //!   painful, so the error messages have to carry the compensation a compiler
 //!   would have. They do: every width mismatch names both widths and the explicit
@@ -31,7 +31,7 @@
 //! - **`Ord` is by width first, then unsigned value**, because a `Bits`
 //!   collection sorted with `sort` groups by width and that is observable.
 //! - **Division does not exist upstream and is added here**
-//!   ([ADR-0009](https://github.com/ostrium-labs/ferrite-lithic/blob/dev/docs/adr/0009-add-integer-division-and-remainder.md)):
+//!   ([ADR-0009](https://github.com/ostrium-labs/ferite/blob/dev/docs/adr/0009-add-integer-division-and-remainder.md)):
 //!   `udiv`, `sdiv`, `urem`, `srem`. They infer large dividers and are not cheap.
 //!
 //! # What is deliberately different

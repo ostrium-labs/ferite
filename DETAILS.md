@@ -5,7 +5,8 @@ Everything known about this project in one place. Companion documents:
 - `docs/design-notes.md` — the IR, simulator and emitter design, read from Hardcaml's source
 - `docs/plans/jane-street-protocol-emulator.md` — the competition plan and timeline
 - `docs/adr/` — 19 accepted architecture decision records
-- `../ferrite-strata/DETAILS.md` — the companion runtime
+- `docs/strata/DETAILS.md` — the Strata runtime in this workspace
+- `docs/monorepo.md` — shared layout, feedback loop and integration boundary
 
 Status: **Phases A1 through A3 are implemented and tested, and the whole workspace is
 green.** All nine tool crates and `ferrite-lithic-corpus` pass: 811 tests, 753 of them
@@ -26,7 +27,7 @@ whose firmware implements production event-streaming protocols.
 
 | | |
 |---|---|
-| Repository | `ostrium-labs/ferrite-lithic`, default branch `dev` |
+| Repository | `ostrium-labs/ferite`, default branch `dev` |
 | Crates | `ferrite-lithic`, `-bits`, `-ir`, `-sim`, `-rtl`, `-derive`, `-wave`, `-cosim`, `-tb` |
 | Licence | Apache-2.0, copyright appendix filled |
 | Prior art | Hardcaml, MIT, Jane Street, studied at `ff4fe60` (`v0.18~preview`) |

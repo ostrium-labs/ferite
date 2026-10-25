@@ -9,7 +9,7 @@
 //! Every claim about Hardcaml's behaviour was read from source with `file:line`
 //! citations rather than taken from its manual, and several of them contradict
 //! what the original plan assumed. See
-//! [`docs/design-notes.md`](https://github.com/ostrium-labs/ferrite-lithic/blob/dev/docs/design-notes.md)
+//! [`docs/design-notes.md`](https://github.com/ostrium-labs/ferite/blob/dev/docs/design-notes.md)
 //! for the full audit.
 //!
 //! # What is inherited deliberately
@@ -52,7 +52,7 @@
 //! - **No global state at all**, so two circuits can be built concurrently.
 //! - **Errors are `Result`, not exceptions**, and every width error names both
 //!   widths and the explicit operation that fixes it — the compensation
-//!   [ADR-0003](https://github.com/ostrium-labs/ferrite-lithic/blob/dev/docs/adr/0003-runtime-widths-not-const-generics.md)
+//!   [ADR-0003](https://github.com/ostrium-labs/ferite/blob/dev/docs/adr/0003-runtime-widths-not-const-generics.md)
 //!   trades const generics for.
 //! - **Stored widths are checked, not trusted.** `width_of` is a single match with
 //!   no arena walk, so `Case`, `ReadPort`, `Mem`, `Instance` and `Wire` carry

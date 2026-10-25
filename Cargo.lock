@@ -428,6 +428,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferrite-strata"
+version = "0.0.1"
+dependencies = [
+ "proptest",
+]
+
+[[package]]
+name = "ferrite-strata-cpu"
+version = "0.0.1"
+dependencies = [
+ "ferrite-strata",
+]
+
+[[package]]
+name = "ferrite-strata-plugin-api"
+version = "0.0.1"
+dependencies = [
+ "ferrite-strata",
+ "libc",
+]
+
+[[package]]
+name = "ferrite-strata-runtime"
+version = "0.0.1"
+dependencies = [
+ "ferrite-strata",
+ "ferrite-strata-cpu",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"

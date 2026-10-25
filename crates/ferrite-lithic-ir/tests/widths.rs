@@ -1,6 +1,6 @@
 //! Width rules for every constructor, and the errors they refuse.
 //!
-//! Widths are runtime values ([ADR-0003](https://github.com/ostrium-labs/ferrite-lithic/blob/dev/docs/adr/0003-runtime-widths-not-const-generics.md)),
+//! Widths are runtime values ([ADR-0003](https://github.com/ostrium-labs/ferite/blob/dev/docs/adr/0003-runtime-widths-not-const-generics.md)),
 //! so every width rule here is a runtime check with a runtime message. The
 //! messages are the compensation for giving up const generics, so
 //! `tests/errors.rs`-style assertions on their text are part of this file's job.

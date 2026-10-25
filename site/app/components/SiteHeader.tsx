@@ -33,6 +33,7 @@ function sectionFor(pathname: string) {
 
 const SECTIONS = [
   { to: "/", label: "Overview", current: (path: string) => path === "/" },
+  { to: "/docs/ouroboros", label: "Strata ↔ Lithic", current: (path: string) => sectionFor(path) === "strata" },
   { to: "/docs/basics", label: "Concepts", current: (path: string) => sectionFor(path) === "background" },
   { to: "/docs/bits", label: "Crates", current: (path: string) => sectionFor(path) === "crates" },
   { to: "/docs/corpus", label: "Corpus", current: (path: string) => sectionFor(path) === "corpus" },
@@ -58,7 +59,7 @@ export function SiteHeader({ pathname }: { pathname: string }) {
   return (
     <header className="sitebar" ref={ref}>
       <div className="sitebar__inner">
-        <Link className="sitebar__wordmark" to="/" aria-label="Ferrite Lithic">
+        <Link className="sitebar__wordmark" to="/" aria-label="ferite">
           <FerriteLogo />
         </Link>
 
@@ -82,7 +83,7 @@ export function SiteHeader({ pathname }: { pathname: string }) {
 
         {/* The one number that is not a link, because it is a fact about the repo rather
             than a place to go. */}
-        <span className="sitebar__meta">{PROJECT_STATS.tests} tests · {PROJECT_STATS.designs} designs</span>
+        <span className="sitebar__meta">Lithic: {PROJECT_STATS.tests} tests · {PROJECT_STATS.designs} designs</span>
       </div>
     </header>
   );

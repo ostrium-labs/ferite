@@ -53,3 +53,6 @@ LLVM (https://llvm.org), Apache License 2.0 with LLVM Exceptions. Referenced as
 a design reference for the possible FIRRTL/CIRCT route recorded in
 docs/design-notes.md. Not vendored and not linked; the Verilog emitter in
 Phase A1 is our own.
+
+Ferrite now includes the Strata runtime. Its original attribution notice is
+retained in docs/strata/NOTICE and forms part of this distribution's notices.

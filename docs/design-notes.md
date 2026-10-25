@@ -11,7 +11,7 @@ revision `ff4fe60` (`v0.18~preview`) in `/home/keshav/Ostrium/hardcaml`, with
 
 | Question | Decision |
 |---|---|
-| Repository | `ostrium-labs/ferrite-lithic` |
+| Repository | `ostrium-labs/ferite` |
 | Crate names | `ferrite-lithic*` — bare `lithic` is permanently taken on crates.io and collides with the card-issuing fintech at lithic.com |
 | Licence | Apache-2.0 |
 | Hardcaml licence | MIT (Jane Street) — port the design, write tests from behaviour, attribute in `NOTICE` |

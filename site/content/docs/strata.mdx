@@ -1,0 +1,46 @@
+## A graph to run, not a circuit to elaborate
+
+Strata is Ferrite's vendor-neutral accelerator runtime. Its graph describes
+tensor operations, dtypes and shapes. Lithic's graph describes bit widths,
+registers and clock edges. Keeping those contracts distinct avoids pretending
+that a model graph is already a hardware implementation.
+
+## Four crates, one workspace
+
+| Crate | Responsibility |
+|---|---|
+| `ferrite-strata` | Tensor graph, arena, capabilities, backend traits and partitioning |
+| `ferrite-strata-cpu` | Reference CPU kernels and correctness baseline |
+| `ferrite-strata-runtime` | Session registration, planning, compilation and execution |
+| `ferrite-strata-plugin-api` | Versioned C vtable, wire format and host-side dynamic loader |
+
+The CPU reference defines expected numerical behaviour for supported operations.
+It is not evidence of hardware speedup. Plugin-boundary code exists, but that
+does not establish production vendor compatibility.
+
+## From graph to numbers
+
+1. Construct a tensor graph using `GraphBuilder`.
+2. Register backends in a runtime `Session`.
+3. Query declared capabilities and partition the graph into supported subgraphs.
+4. Ask each selected backend to compile its subgraph.
+5. Execute compiled partitions and host fallback in the shared arena.
+
+**Decline is normal.** A backend can refuse compilation without treating an
+unsupported pattern as a fatal execution failure. Host fallback runs supported
+reference operations where no accelerator takes the work; it is not a promise
+that arbitrary unknown operations have a CPU implementation.
+
+## Inspect the implementation
+
+- [Graph and backend contracts](https://github.com/ostrium-labs/ferite/blob/dev/crates/ferrite-strata/src/lib.rs)
+- [CPU reference backend](https://github.com/ostrium-labs/ferite/blob/dev/crates/ferrite-strata-cpu/src/lib.rs)
+- [Host runtime](https://github.com/ostrium-labs/ferite/blob/dev/crates/ferrite-strata-runtime/src/lib.rs)
+- [End-to-end runtime tests](https://github.com/ostrium-labs/ferite/blob/dev/crates/ferrite-strata-runtime/tests/end_to_end.rs)
+
+## Current boundary
+
+Inference is the target; training is not. CubeCL, the PyTorch entry point and a
+Lithic hardware backend are not implemented. Read the
+[backend boundary](/docs/strata-plugins) before assuming that sharing a workspace
+also means sharing a device-execution path.

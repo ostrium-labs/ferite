@@ -4,7 +4,7 @@ version = "0.0.1"
 edition = "2024"
 rust-version = "1.97"
 license = "Apache-2.0"
-repository = "https://github.com/ostrium-labs/ferrite-lithic"
+repository = "https://github.com/ostrium-labs/ferite"
 authors = ["Dinakaran V <112177746+dina-kar@users.noreply.github.com>"]
 description = "The Tiny Tapeout submission boundary for the Ferrite Lithic hardware DSL"
 

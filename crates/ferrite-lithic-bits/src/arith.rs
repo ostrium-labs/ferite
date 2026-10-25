@@ -21,7 +21,7 @@
 //!
 //! [`udiv`](Bits::udiv), [`sdiv`](Bits::sdiv), [`urem`](Bits::urem) and
 //! [`srem`](Bits::srem) do not exist anywhere in Hardcaml
-//! ([ADR-0009](https://github.com/ostrium-labs/ferrite-lithic/blob/dev/docs/adr/0009-add-integer-division-and-remainder.md)).
+//! ([ADR-0009](https://github.com/ostrium-labs/ferite/blob/dev/docs/adr/0009-add-integer-division-and-remainder.md)).
 //! They are real primitives here, but they are **not** cheap: each infers a large
 //! divider. For the constant-reciprocal patterns a datapath usually wants, build
 //! the reciprocal by hand with shifts and a multiply instead.

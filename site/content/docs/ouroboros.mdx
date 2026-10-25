@@ -1,0 +1,50 @@
+## One repository, two responsibilities
+
+Ferrite Lithic and Ferrite Strata share one Rust workspace, lockfile, CI and
+documentation site. Lithic constructs and verifies circuits. Strata partitions
+inference graphs and executes backend subgraphs with a CPU fallback.
+Their public crate names stay unchanged.
+
+## The ouroboros loop
+
+1. **Strata feeds Lithic.** Inference subgraphs, shapes, dtypes and CPU-reference
+   outputs define workloads and correctness targets for hardware design.
+2. **Lithic checks the circuit.** Simulation, emitted-RTL equivalence and synthesis
+   measurements establish behaviour, cycle costs and resource budgets.
+3. **Lithic feeds Strata.** A future hardware backend advertises measured supported
+   patterns and resource limits so the runtime can place work honestly.
+4. **Strata closes the loop.** Compile declines, fallback and workload bottlenecks
+   identify what the next hardware revision should improve.
+
+This is a co-design loop, not a circular dependency. Strata's tensor graph is not
+Lithic's circuit IR. A future adapter can depend on both public APIs while keeping
+each core independent.
+
+## What exists, and what does not
+
+All sixteen crates live under `crates/`: twelve Lithic crates and four Strata
+crates. The graph, CPU reference, host runtime and plugin-boundary code are
+present. **A Lithic-backed Strata backend is not implemented.** Neither are
+tensor-to-circuit lowering, FPGA transport, bitstream deployment, CubeCL or
+PyTorch integration. The merge makes coordinated work possible; it does not
+claim end-to-end acceleration.
+
+The [Lithic toolchain](/docs/bits) keeps its hardware verification contracts.
+The [Strata runtime](/docs/strata) keeps its capability and decline contracts.
+Recorded test and benchmark figures elsewhere on this site are historical
+Lithic snapshots, not combined monorepo totals.
+
+## Work from the repository root
+
+```sh
+cargo test --workspace --all-features --locked
+cargo test -p ferrite-strata-runtime --locked
+cargo test -p ferrite-lithic-sim --locked
+cargo doc --workspace --no-deps --all-features --locked
+```
+
+The [migration guide](https://github.com/ostrium-labs/ferite/blob/dev/docs/monorepo.md)
+records layout, preserved notices and source-import scope. Earlier Lithic and
+Strata ADRs retain separate numbering; ADR-0024 supersedes the old two-repository
+layout. The original sibling repository is retained for recovery; remote archival
+and Git-history merging are not part of this source consolidation.

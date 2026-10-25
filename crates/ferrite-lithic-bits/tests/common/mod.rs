@@ -2,7 +2,7 @@
 //!
 //! `num-bigint` is a dev-dependency only. It is the one place our oracle is *not*
 //! Hardcaml, because Hardcaml has no division or remainder to compare against
-//! ([ADR-0009](https://github.com/ostrium-labs/ferrite-lithic/blob/dev/docs/adr/0009-add-integer-division-and-remainder.md)).
+//! ([ADR-0009](https://github.com/ostrium-labs/ferite/blob/dev/docs/adr/0009-add-integer-division-and-remainder.md)).
 //! Everything else is checked against Hardcaml-derived expectations written out by
 //! hand in the unit tests.
 
