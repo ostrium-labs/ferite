@@ -23,6 +23,10 @@ Rust trait objects are not a stable shared-library ABI. The
 wire encodings, and a host-side loader. Opaque handles and allocator ownership
 keep memory from being freed by the wrong side.
 
+Rust ABI declarations are available today. A matching C header and its conformance
+tests are not shipped yet, so the non-Rust vendor integration route remains
+unavailable rather than requiring vendors to reconstruct the ABI themselves.
+
 Loading a plugin still executes arbitrary native code. Wire bounds checks and
 version checks are not a sandbox. Only load trusted libraries.
 

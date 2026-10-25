@@ -372,12 +372,10 @@ fn a_missing_input_is_reported_naming_the_value() {
     let err = step
         .run_with_inputs(&HashMap::new())
         .expect_err("no inputs supplied");
-    // The message names the value in the *partition's* numbering, not the caller's,
-    // because that is the arena the executor sees. Stated rather than papered over:
-    // a caller debugging this learns which partition wanted an operand it never
-    // supplied, which is the question they actually have.
-    assert!(err.to_string().contains("in the arena"), "{err}");
-    assert!(err.to_string().contains("cpu"), "{err}");
+    assert!(
+        err.to_string().contains("missing external input v0"),
+        "{err}"
+    );
     // A missing input is not a device failure.
     assert!(!err.is_device_poisoning());
 }

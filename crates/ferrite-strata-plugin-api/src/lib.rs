@@ -14,14 +14,15 @@
 //!
 //! | Module | Who needs it |
 //! |---|---|
-//! | [`raw`] | anyone writing a plugin, in any language — it mirrors `include/strata_plugin.h` |
+//! | [`raw`] | Rust plugin authors; the authoritative ABI declarations |
 //! | [`wire`] | anyone who has to read or write a subgraph or a capability set |
 //! | [`host`] | a host that wants to load a plugin; not needed by a vendor |
 //!
 //! A vendor in Rust depends on this crate and implements the C function pointers.
-//! A vendor in anything else compiles `include/strata_plugin.h` and implements
-//! the same declarations. Neither writes a Rust trait, and neither links our
-//! compiler.
+//! A matching C header is not shipped yet. The non-Rust vendor integration route
+//! is unavailable until that header and its ABI conformance tests are provided.
+//! Rust vendors implement these declarations directly; they do not implement a
+//! Rust backend trait or link the host compiler.
 //!
 //! # The idea that survives the crossing
 //!

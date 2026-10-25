@@ -40,6 +40,10 @@ use crate::wire::{self, SectionKind, WireError};
 use super::PluginError;
 use super::loader::{Library, Loaded, PluginVersionTriple};
 
+#[cfg(all(test, target_os = "linux"))]
+#[path = "plugin_tests.rs"]
+mod tests;
+
 /// A loaded vendor plugin, usable as a [`Backend`].
 ///
 /// Cheap to share and safe to use from several threads, because the ABI has no
@@ -66,6 +70,19 @@ struct PluginInner {
 // immutable after load; `Library` is `Send + Sync` on the same basis.
 unsafe impl Send for PluginInner {}
 unsafe impl Sync for PluginInner {}
+
+struct ContextGuard {
+    ctx: *mut c_void,
+    free: Option<unsafe extern "C" fn(*mut c_void)>,
+}
+
+impl Drop for ContextGuard {
+    fn drop(&mut self) {
+        if let Some(free) = self.free {
+            unsafe { free(self.ctx) };
+        }
+    }
+}
 
 impl Plugin {
     /// `dlopen` a plugin, negotiate its ABI, and decode its capabilities.
@@ -94,7 +111,12 @@ impl Plugin {
             None => core::ptr::null_mut(),
         };
 
+        let mut guard = ContextGuard {
+            ctx,
+            free: vtable.plugin_free,
+        };
         let support = read_capabilities(&vtable, ctx, library.path())?;
+        guard.free = None;
 
         Ok(Self {
             inner: Arc::new(PluginInner {
@@ -252,6 +274,15 @@ impl Backend for Plugin {
 
     fn capabilities(&self) -> &StrataSupport {
         &self.inner.support
+    }
+
+    fn supports(
+        &self,
+        pattern_id: &str,
+        dtype: ferrite_strata::DType,
+        shape_class: ferrite_strata::ShapeClass,
+    ) -> ferrite_strata::SupportLevel {
+        self.ask(pattern_id, dtype, shape_class)
     }
 
     fn compile(&self, subgraph: &Graph, pattern_id: &str) -> Result<CompileOutcome, Error> {
@@ -435,6 +466,22 @@ impl RemoteExecutable {
         let ctx = self.plugin.ctx;
 
         let mut refs: Vec<StrataBufferRef> = Vec::with_capacity(self.graph.value_count());
+        let inputs = self
+            .graph
+            .values()
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                if value.producer.is_some() {
+                    return Ok(None);
+                }
+                let id = ValueId(index as u32);
+                let entry = arena.get(id).ok_or_else(|| {
+                    Error::invalid_argument(format!("missing external input {id}"))
+                })?;
+                encode_host(entry, value.dtype, value.byte_len()).map(Some)
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
 
         for (index, value) in self.graph.values().iter().enumerate() {
             let bytes = value.byte_len();
@@ -462,12 +509,7 @@ impl RemoteExecutable {
             }
             buffers.push(handle);
 
-            // Only values the arena already holds are copied in. A subgraph value
-            // the host never populated is one the plugin is expected to produce,
-            // and writing zeros over it would destroy a fusion's accumulator.
-            if let Some(entry) = arena.get(ValueId(index as u32))
-                && let Some(data) = encode_host(entry, value.dtype, bytes)?
-            {
+            if let Some(data) = &inputs[index] {
                 // SAFETY: `data` outlives the call, and `bytes` is what the graph's
                 // dtype and shape imply, which is the same desc the plugin
                 // allocated from.
@@ -525,9 +567,7 @@ impl RemoteExecutable {
                     format!("reading {id} back from the plugin failed"),
                 ));
             }
-            if let Some(entry) = decode_host(out, value.dtype) {
-                arena.insert(id, entry);
-            }
+            arena.insert(id, decode_host(out, value.dtype));
         }
         Ok(())
     }
@@ -543,19 +583,15 @@ impl Drop for RemoteExecutable {
     }
 }
 
-/// The host's bytes for an arena entry, or `None` to leave the buffer alone.
-///
-/// `Opaque` returns `None` rather than copying the bytes: the entry exists so the
-/// host can hand a device pointer back unchanged, and reading it as bytes would
-/// be exactly the dereference the indirection was added to prevent.
+/// Encode an arena entry without changing its dtype or declared byte length.
 fn encode_host(
     entry: &ArenaEntry,
     dtype: ferrite_strata::dtype::DType,
     bytes: usize,
-) -> Result<Option<Vec<u8>>, Error> {
-    match entry {
+) -> Result<Vec<u8>, Error> {
+    let out = match entry {
         ArenaEntry::F32(values) => {
-            if dtype.element.size_in_bytes() != 4 {
+            if dtype != ferrite_strata::DType::plain(ferrite_strata::ElementType::F32) {
                 return Err(Error::new(
                     ErrorCode::InvalidArgument,
                     format!(
@@ -568,23 +604,29 @@ fn encode_host(
             for v in values {
                 out.extend_from_slice(&v.to_le_bytes());
             }
-            out.resize(bytes, 0);
-            Ok(Some(out))
+            out
         }
-        ArenaEntry::Opaque(_) => Ok(None),
+        ArenaEntry::Opaque(values) => values.clone(),
+    };
+    if out.len() != bytes {
+        return Err(Error::invalid_argument(format!(
+            "input has {} bytes, expected {bytes}",
+            out.len()
+        )));
     }
+    Ok(out)
 }
 
-fn decode_host(bytes: Vec<u8>, dtype: ferrite_strata::dtype::DType) -> Option<ArenaEntry> {
-    if dtype.element.size_in_bytes() != 4 {
-        return Some(ArenaEntry::Opaque(bytes));
+fn decode_host(bytes: Vec<u8>, dtype: ferrite_strata::dtype::DType) -> ArenaEntry {
+    if dtype != ferrite_strata::DType::plain(ferrite_strata::ElementType::F32) {
+        return ArenaEntry::Opaque(bytes);
     }
     let mut values = Vec::with_capacity(bytes.len() / 4);
     for chunk in bytes.chunks_exact(4) {
         let raw: [u8; 4] = chunk.try_into().expect("chunks_exact(4)");
         values.push(f32::from_le_bytes(raw));
     }
-    Some(ArenaEntry::F32(values))
+    ArenaEntry::F32(values)
 }
 
 /// The three outcomes of an entry point's return code.

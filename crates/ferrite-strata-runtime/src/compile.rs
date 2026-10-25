@@ -42,9 +42,11 @@ impl Work {
         let mut local = Arena::new();
         let operands: Vec<ValueId> = self
             .subgraph
-            .nodes()
+            .values()
             .iter()
-            .flat_map(|node| node.inputs.iter().copied())
+            .enumerate()
+            .filter(|(_, value)| value.producer.is_none())
+            .map(|(index, _)| ValueId(index as u32))
             .collect();
         for extracted in operands {
             // An operand produced by an earlier unit is already in the caller's arena
@@ -52,9 +54,10 @@ impl Work {
             let Some(&original) = self.back.get(&extracted) else {
                 continue;
             };
-            if let Some(entry) = arena.get(original) {
-                local.insert(extracted, entry.clone());
-            }
+            let entry = arena.get(original).ok_or_else(|| {
+                Error::invalid_argument(format!("missing external input {original}"))
+            })?;
+            local.insert(extracted, entry.clone());
         }
 
         match &self.executor {
@@ -66,9 +69,13 @@ impl Work {
             let Some(&original) = self.back.get(&extracted) else {
                 continue;
             };
-            if let Some(entry) = local.get(extracted) {
-                arena.insert(original, entry.clone());
-            }
+            let entry = local.get(extracted).ok_or_else(|| {
+                Error::new(
+                    ErrorCode::Internal,
+                    format!("executor did not produce {extracted}"),
+                )
+            })?;
+            arena.insert(original, entry.clone());
         }
         Ok(())
     }
@@ -215,14 +222,66 @@ impl ExecutionError {
 /// the host, which is the same path a declined partition takes during planning.
 pub(crate) fn compile_plan(session: &Session, plan: &Plan, graph: &Graph) -> Result<Step, Error> {
     let mut units: Vec<(Unit, Work)> = Vec::new();
-
-    for partition in &plan.inner.partitions {
-        let backend = session.backend(partition.backend);
+    let mut pending: Vec<(Unit, Vec<NodeId>, String)> = plan
+        .inner
+        .partitions
+        .iter()
+        .map(|partition| {
+            (
+                Unit::Backend(partition.backend),
+                partition.nodes.clone(),
+                partition.pattern_id.clone(),
+            )
+        })
+        .collect();
+    pending.extend(
+        plan.inner
+            .host_nodes
+            .iter()
+            .map(|&node| (Unit::Host, vec![node], String::new())),
+    );
+    let mut completed = std::collections::HashSet::new();
+    while !pending.is_empty() {
+        let ready = pending
+            .iter()
+            .position(|(_, nodes, _)| {
+                nodes.iter().all(|&node| {
+                    graph.node(node).operands().iter().all(|&input| {
+                        graph.value(input).producer.is_none_or(|producer| {
+                            nodes.contains(&producer) || completed.contains(&producer)
+                        })
+                    })
+                })
+            })
+            .ok_or_else(|| Error::invalid_argument("partition dependencies contain a cycle"))?;
+        let (unit, mut nodes, pattern_id) = pending.remove(ready);
+        if unit == Unit::Host {
+            while let Some(ready) = pending.iter().position(|(next_unit, next_nodes, _)| {
+                *next_unit == Unit::Host
+                    && next_nodes.iter().all(|&node| {
+                        graph.node(node).operands().iter().all(|&input| {
+                            graph.value(input).producer.is_none_or(|producer| {
+                                completed.contains(&producer) || nodes.contains(&producer)
+                            })
+                        })
+                    })
+            }) {
+                nodes.extend(pending.remove(ready).1);
+            }
+            nodes.sort_unstable();
+        }
         let (subgraph, back) = graph
-            .subgraph_with_map(&partition.nodes)
+            .subgraph_with_map(&nodes)
             .map_err(|error| Error::new(ErrorCode::Internal, error.to_string()))?;
 
-        let executor = match backend.compile(&subgraph, &partition.pattern_id)? {
+        let outcome = match unit {
+            Unit::Backend(index) => session.backend(index).compile(&subgraph, &pattern_id)?,
+            Unit::Host => CompileOutcome::Declined {
+                backend: "host".into(),
+                reason: "host placement".into(),
+            },
+        };
+        let executor = match outcome {
             CompileOutcome::Compiled(executable) => Executor::Compiled(executable),
             CompileOutcome::Declined { .. } => {
                 // The capability query said yes and the compiler said no. That
@@ -237,27 +296,18 @@ pub(crate) fn compile_plan(session: &Session, plan: &Plan, graph: &Graph) -> Res
         };
 
         units.push((
-            Unit::Backend(partition.backend),
+            if matches!(executor, Executor::Host) {
+                Unit::Host
+            } else {
+                unit
+            },
             Work {
                 subgraph,
                 executor,
                 back,
             },
         ));
-    }
-
-    if !plan.inner.host_nodes.is_empty() {
-        let (subgraph, back) = graph
-            .subgraph_with_map(&plan.inner.host_nodes)
-            .map_err(|error| Error::new(ErrorCode::Internal, error.to_string()))?;
-        units.push((
-            Unit::Host,
-            Work {
-                subgraph,
-                executor: Executor::Host,
-                back,
-            },
-        ));
+        completed.extend(nodes);
     }
 
     Ok(Step {
@@ -281,6 +331,16 @@ fn run_host_graph(subgraph: &Graph, arena: &mut Arena) -> Result<(), Error> {
 /// Compute one node into `arena`.
 fn host_node(graph: &Graph, node: NodeId, arena: &mut Arena) -> Result<(), Error> {
     let reference = graph.node(node);
+    let arity = match reference.op {
+        Op::Add | Op::Mul => Some(2),
+        Op::Gelu | Op::Exp | Op::Log => Some(1),
+        _ => None,
+    };
+    if arity.is_some_and(|arity| reference.inputs.len() != arity) {
+        return Err(Error::invalid_argument(
+            "incorrect host-kernel operand count",
+        ));
+    }
     let Some(&output) = reference.outputs.first() else {
         return Ok(());
     };
@@ -293,6 +353,14 @@ fn host_node(graph: &Graph, node: NodeId, arena: &mut Arena) -> Result<(), Error
                 format!("{id} is not in the arena, or is not readable as f32"),
             )
         })?;
+        let value = graph.value(id);
+        if value.dtype != ferrite_strata::DType::plain(ferrite_strata::ElementType::F32)
+            || data.len() != value.shape.element_count()
+        {
+            return Err(Error::invalid_argument(format!(
+                "{id} does not match its declared f32 shape"
+            )));
+        }
         operands.push(data);
     }
 
@@ -300,8 +368,28 @@ fn host_node(graph: &Graph, node: NodeId, arena: &mut Arena) -> Result<(), Error
         Op::Gelu => map1(operands[0], gelu),
         Op::Exp => map1(operands[0], f32::exp),
         Op::Log => map1(operands[0], f32::ln),
-        Op::Add => zip2(operands[0], operands[1], |a, b| a + b),
-        Op::Mul => zip2(operands[0], operands[1], |a, b| a * b),
+        Op::Add | Op::Mul => {
+            let shape = graph
+                .value(reference.inputs[0])
+                .shape
+                .broadcast(&graph.value(reference.inputs[1]).shape)
+                .map_err(|error| Error::invalid_argument(error.to_string()))?;
+            if shape != graph.value(output).shape {
+                return Err(Error::invalid_argument("incorrect broadcast output shape"));
+            }
+            let lhs = broadcast(operands[0], graph.value(reference.inputs[0]).shape, shape);
+            let rhs = broadcast(operands[1], graph.value(reference.inputs[1]).shape, shape);
+            lhs.iter()
+                .zip(rhs)
+                .map(|(&left, right)| {
+                    if matches!(reference.op, Op::Add) {
+                        left + right
+                    } else {
+                        left * right
+                    }
+                })
+                .collect()
+        }
         other => {
             return Err(Error::new(
                 ErrorCode::Unimplemented,
@@ -323,9 +411,29 @@ fn map1(input: &[f32], f: impl Fn(f32) -> f32) -> Vec<f32> {
     input.iter().copied().map(f).collect()
 }
 
-fn zip2(lhs: &[f32], rhs: &[f32], f: impl Fn(f32, f32) -> f32) -> Vec<f32> {
-    let n = lhs.len().min(rhs.len());
-    (0..n).map(|i| f(lhs[i], rhs[i])).collect()
+fn broadcast(
+    input: &[f32],
+    source: ferrite_strata::Shape,
+    target: ferrite_strata::Shape,
+) -> Vec<f32> {
+    (0..target.element_count())
+        .map(|mut index| {
+            let mut source_index = 0;
+            let mut stride = 1;
+            for axis in (0..target.rank()).rev() {
+                let coordinate = index % target.dims()[axis];
+                index /= target.dims()[axis];
+                if let Some(source_axis) = axis.checked_sub(target.rank() - source.rank()) {
+                    let dimension = source.dims()[source_axis];
+                    if dimension != 1 {
+                        source_index += coordinate * stride;
+                    }
+                    stride *= dimension;
+                }
+            }
+            input[source_index]
+        })
+        .collect()
 }
 
 /// The exact GELU, matching [`ferrite_strata_cpu`]'s kernel.

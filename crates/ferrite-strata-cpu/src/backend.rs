@@ -669,38 +669,36 @@ fn broadcast_to(input: &CpuTensor, shape: Shape) -> Result<CpuTensor, CpuError> 
     }
     // The same validation the IR's own broadcast performs, so a refusal here agrees
     // with the refusal a partitioner would have produced.
-    source
+    let broadcast = source
         .broadcast(&shape)
         .map_err(|reason| CpuError::Broadcast {
             detail: Box::new(BroadcastFailure::new(source, shape, reason)),
         })?;
+    if broadcast != shape {
+        return Err(CpuError::ShapeMismatch {
+            expected: shape.element_count(),
+            got: broadcast.element_count(),
+        });
+    }
 
     let mut out = CpuTensor::zeros(shape)?;
     let offset = shape.rank().saturating_sub(source.rank());
-    let rows = shape.dim(0).unwrap_or(1);
-    let cols = shape.dim(1).unwrap_or(1);
-
-    // Index back into the source for each output position. A source dimension of 1
-    // or a missing one means "take index 0"; otherwise the index carries over.
-    let source_dim = |axis: usize| source.dim(axis + offset);
-    let pick = |axis: usize, index: usize| match source_dim(axis) {
-        Some(1) | None => 0,
-        Some(size) => index.min(size.saturating_sub(1)),
-    };
-
-    if source.rank() <= 1 {
-        for i in 0..out.len() {
-            out.as_mut_slice()[i] =
-                input.as_slice()[pick(0, i / cols.max(1)) * cols + pick(1, i % cols)];
+    for (flat, output) in out.as_mut_slice().iter_mut().enumerate() {
+        let mut remainder = flat;
+        let mut source_index = 0;
+        let mut stride = 1;
+        for axis in (0..shape.rank()).rev() {
+            let coordinate = remainder % shape.dims()[axis];
+            remainder /= shape.dims()[axis];
+            if let Some(source_axis) = axis.checked_sub(offset) {
+                let dimension = source.dims()[source_axis];
+                if dimension != 1 {
+                    source_index += coordinate * stride;
+                }
+                stride *= dimension;
+            }
         }
-        return Ok(out);
-    }
-    for row in 0..rows {
-        for col in 0..cols {
-            let r = pick(0, row);
-            let c = pick(1, col);
-            out.set(row, col, input.at(r, c)?)?;
-        }
+        *output = input.as_slice()[source_index];
     }
     Ok(out)
 }
@@ -774,6 +772,19 @@ impl CpuBackend {
             });
         for op in ReferenceOp::all() {
             for class in reference::all_shape_classes() {
+                if matches!(
+                    op,
+                    ReferenceOp::MatMul
+                        | ReferenceOp::Softmax
+                        | ReferenceOp::LayerNorm
+                        | ReferenceOp::Linear
+                        | ReferenceOp::Transpose
+                ) && !matches!(
+                    class,
+                    ShapeClass::Matrix | ShapeClass::OuterProduct | ShapeClass::Empty
+                ) {
+                    continue;
+                }
                 capabilities = capabilities.with_pattern(PatternSupport::new(
                     op.pattern_id(),
                     CpuTensor::dtype(),
@@ -918,6 +929,55 @@ impl CpuBackend {
             }
 
             let out = node.outputs[0];
+            let rank_two = matches!(
+                node.op,
+                Op::MatMul
+                    | Op::Softmax { .. }
+                    | Op::LayerNorm { .. }
+                    | Op::Linear { .. }
+                    | Op::Transpose { .. }
+                    | Op::Slice { .. }
+            );
+            if rank_two
+                && (subgraph.value(out).shape.rank() != 2
+                    || node
+                        .inputs
+                        .iter()
+                        .any(|&input| subgraph.value(input).shape.rank() != 2))
+            {
+                return Ok(CpuCompile::Declined {
+                    reason: format!("{} requires rank-two inputs and output", node.op.name()),
+                });
+            }
+            if let Op::Softmax { axis } = node.op
+                && axis != -1
+                && axis != 1
+            {
+                return Ok(CpuCompile::Declined {
+                    reason: format!("softmax axis {axis} is not supported; use the last axis"),
+                });
+            }
+            if let Op::Transpose { permutation } = &node.op
+                && permutation != &[1, 0]
+            {
+                return Ok(CpuCompile::Declined {
+                    reason: "only the rank-two transpose [1, 0] is supported".into(),
+                });
+            }
+            if let Op::Slice { axis, stride, .. } = node.op
+                && (axis != 1 || stride <= 0)
+            {
+                return Ok(CpuCompile::Declined {
+                    reason: "only positive-stride slices along axis 1 are supported".into(),
+                });
+            }
+            if let Op::Linear { weight, .. } = node.op
+                && subgraph.value(weight).shape.rank() != 2
+            {
+                return Ok(CpuCompile::Declined {
+                    reason: "linear weights must have rank two".into(),
+                });
+            }
             let step = match &node.op {
                 Op::Add => Step::Add {
                     lhs: operand(node, id, 0)?,

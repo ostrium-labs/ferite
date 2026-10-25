@@ -128,6 +128,35 @@ pub enum Op {
 }
 
 impl Op {
+    fn parameters(&self) -> Vec<ValueId> {
+        match self {
+            Self::Linear { weight, bias } => std::iter::once(*weight).chain(*bias).collect(),
+            Self::LayerNorm { gamma, beta, .. } => vec![*gamma, *beta],
+            _ => Vec::new(),
+        }
+    }
+
+    fn remap_parameters(&self, values: &HashMap<ValueId, ValueId>) -> Result<Self, GraphError> {
+        let remap = |id: &ValueId| {
+            values
+                .get(id)
+                .copied()
+                .ok_or(GraphError::UseBeforeDefinition { id: *id })
+        };
+        Ok(match self {
+            Self::Linear { weight, bias } => Self::Linear {
+                weight: remap(weight)?,
+                bias: bias.as_ref().map(remap).transpose()?,
+            },
+            Self::LayerNorm { gamma, beta, eps } => Self::LayerNorm {
+                gamma: remap(gamma)?,
+                beta: remap(beta)?,
+                eps: *eps,
+            },
+            _ => self.clone(),
+        })
+    }
+
     /// Whether this op consumes nothing, which makes it a graph input.
     #[must_use]
     pub const fn is_source(&self) -> bool {
@@ -230,6 +259,18 @@ pub struct Node {
 }
 
 impl Node {
+    /// Every consumed value, including parameters embedded in the operation.
+    #[must_use]
+    pub fn operands(&self) -> Vec<ValueId> {
+        let mut operands = self.inputs.clone();
+        for parameter in self.op.parameters() {
+            if !operands.contains(&parameter) {
+                operands.push(parameter);
+            }
+        }
+        operands
+    }
+
     /// How many results this node produces.
     #[must_use]
     pub fn arity(&self) -> usize {
@@ -420,7 +461,7 @@ impl Graph {
         // First pass: every external operand becomes an input, before any node reads
         // it.
         for &node in nodes {
-            for &input in &self.node(node).inputs {
+            for input in self.node(node).operands() {
                 let produced_inside = self
                     .value(input)
                     .producer
@@ -468,8 +509,10 @@ impl Graph {
                 reference.name.as_str().to_string()
             };
 
+            let mut remapped_values = external.clone();
+            remapped_values.extend(&produced);
             let outputs = builder.node(
-                reference.op.clone(),
+                reference.op.remap_parameters(&remapped_values)?,
                 &inputs,
                 &specs,
                 reference.attrs.clone(),
@@ -493,7 +536,7 @@ impl Graph {
                     .nodes()
                     .iter()
                     .enumerate()
-                    .any(|(i, other)| !in_set[i] && other.inputs.contains(&out));
+                    .any(|(i, other)| !in_set[i] && other.operands().contains(&out));
                 if (self.is_output(out) || consumed_outside)
                     && let Some(&remapped) = produced.get(&out)
                 {
@@ -563,7 +606,7 @@ impl Graph {
             }
         }
         for node in &nodes {
-            for &input in &node.inputs {
+            for input in node.operands() {
                 let in_range = usize::try_from(input.0)
                     .ok()
                     .is_some_and(|i| i < values.len());
@@ -681,7 +724,7 @@ impl GraphBuilder {
         let name = name.into();
         self.check_name_free(&name)?;
 
-        for &input in inputs {
+        for input in inputs.iter().copied().chain(op.parameters()) {
             if !self.graph.has_value(input) {
                 return Err(GraphError::UnknownValue { id: input });
             }

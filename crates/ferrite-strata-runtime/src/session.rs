@@ -86,13 +86,6 @@ impl Plan {
 #[derive(Default)]
 pub struct Session {
     backends: Vec<Box<dyn Backend>>,
-    /// Cached plan for the most recently planned graph.
-    ///
-    /// Not a general cache — one slot, deliberately. The multi-entry compiled-subgraph
-    /// cache is keyed on [`StableName`](ferrite_strata::StableName) and belongs with
-    /// the runtime that owns device handles; keeping a single slot here is enough to
-    /// make `plan` then `compile` cheap without inventing an eviction policy.
-    last_plan: Option<(String, Plan)>,
 }
 
 impl std::fmt::Debug for Session {
@@ -170,11 +163,10 @@ impl Session {
             inner,
             graph_name: graph.name().to_string(),
         };
-        self.last_plan = Some((plan.graph_name.clone(), plan.clone_for_cache()));
         Ok(plan)
     }
 
-    /// Compile the plan made for `graph`'s name into something runnable.
+    /// Plan and compile the current graph against the current backends.
     ///
     /// Takes the graph rather than a plan so the compiled artefact cannot outlive the
     /// graph it was extracted from — a plan is cheap to rebuild, a stale one is not
@@ -184,10 +176,7 @@ impl Session {
     ///
     /// If a backend reports a hard error, or a partition cannot be extracted.
     pub fn compile(&mut self, graph: &Graph) -> Result<Step, Error> {
-        let plan = match &self.last_plan {
-            Some((name, plan)) if *name == graph.name() => plan.clone_for_cache(),
-            _ => self.plan(graph)?,
-        };
+        let plan = self.plan(graph)?;
         compile_plan(self, &plan, graph)
     }
 
@@ -198,15 +187,6 @@ impl Session {
     /// See [`Session::compile`].
     pub fn compile_plan(&self, graph: &Graph, plan: &Plan) -> Result<Step, Error> {
         compile_plan(self, plan, graph)
-    }
-}
-
-impl Plan {
-    fn clone_for_cache(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            graph_name: self.graph_name.clone(),
-        }
     }
 }
 

@@ -145,21 +145,7 @@ fn run_yosys(name: &str, path: &Path, dir: &Path) -> std::process::Output {
 /// flip-flop and does not come out of the register budget.
 fn parse_stat(text: &str) -> Cells {
     let mut cells = Cells::default();
-    for line in text.lines() {
-        let trimmed = line.trim();
-        // A cell line looks like "17   $_AND_": a count, then the kind.
-        let Some((count, kind)) = trimmed.split_once(char::is_whitespace) else {
-            continue;
-        };
-        // The kind is padded: the line is "8   $_MUX_", so the second half
-        // still has its leading spaces.
-        let kind = kind.trim();
-        if !kind.starts_with('$') {
-            continue;
-        }
-        let Ok(count) = count.trim().parse::<usize>() else {
-            continue;
-        };
+    for (kind, count) in stat_rows(text) {
         if kind.contains("DFF") {
             cells.flops += count;
         } else if kind.contains("mem") || kind.contains("MEM") {
@@ -169,6 +155,45 @@ fn parse_stat(text: &str) -> Cells {
         }
     }
     cells
+}
+
+fn stat_rows(text: &str) -> Vec<(&str, usize)> {
+    let last = text.rsplit("=== ").next().unwrap_or(text);
+    last.lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let first = fields.next()?;
+            let second = fields.next()?;
+            if fields.next().is_some() {
+                return None;
+            }
+            let (kind, count) = if first.starts_with('$') {
+                (first, second)
+            } else {
+                (second, first)
+            };
+            if !kind.starts_with('$') {
+                return None;
+            }
+            Some((kind, count.parse().ok()?))
+        })
+        .collect()
+}
+
+#[test]
+fn stat_parser_accepts_both_column_orders_and_only_the_final_report() {
+    for report in [
+        "17 $_AND_\n8 $_DFF_P_\n3 $mem_v2",
+        "$_AND_ 17\n$_DFF_P_ 8\n$mem_v2 3",
+    ] {
+        let cells = parse_stat(&format!(
+            "=== old ===\n999 $_AND_\n=== top ===\n{report}\nEnd of script."
+        ));
+        assert_eq!(cells.gates, 17);
+        assert_eq!(cells.flops, 8);
+        assert_eq!(cells.memory_bits, 3);
+    }
+    assert_eq!(parse_stat("unrecognized output").gates, 0);
 }
 
 /// A design to synthesise: its name, its variant, and how to build it.
@@ -452,21 +477,10 @@ pub fn cell_kinds(verilog: &str, name: &str) -> BTreeMap<String, usize> {
     let path: PathBuf = dir.join(format!("{name}.v"));
     std::fs::write(&path, verilog).expect("writing the design");
     let output = run_yosys(name, &path, &dir);
-    let mut out = BTreeMap::new();
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        let trimmed = line.trim();
-        let Some((count, kind)) = trimmed.split_once(char::is_whitespace) else {
-            continue;
-        };
-        let kind = kind.trim();
-        if !kind.starts_with('$') {
-            continue;
-        }
-        if let Ok(value) = count.trim().parse::<usize>() {
-            out.insert(kind.to_string(), value);
-        }
-    }
-    out
+    stat_rows(&String::from_utf8_lossy(&output.stdout))
+        .into_iter()
+        .map(|(kind, count)| (kind.to_string(), count))
+        .collect()
 }
 
 /// The path a design's Verilog was written to, for a caller that wants to keep it.

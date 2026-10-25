@@ -629,10 +629,99 @@ fn the_capability_blob_does_not_claim_fusion() {
     let backend = CpuBackend::new();
     for op in ReferenceOp::all() {
         assert_eq!(
-            backend.supports(op.pattern_id(), f32(), ShapeClass::Vector),
+            backend.supports(op.pattern_id(), f32(), ShapeClass::Matrix),
             SupportLevel::Fallback,
             "{} should not be claimed as fused",
             op.pattern_id()
+        );
+    }
+}
+
+#[test]
+fn expansion_right_aligns_vectors_scalars_and_higher_rank_inputs() {
+    for (source, target, values, expected) in [
+        (
+            vec![2],
+            vec![3, 2],
+            vec![7.0, 8.0],
+            vec![7.0, 8.0, 7.0, 8.0, 7.0, 8.0],
+        ),
+        (vec![], vec![2, 2, 2], vec![9.0], vec![9.0; 8]),
+        (
+            vec![2],
+            vec![2, 2, 2],
+            vec![7.0, 8.0],
+            vec![7.0, 8.0, 7.0, 8.0, 7.0, 8.0, 7.0, 8.0],
+        ),
+    ] {
+        let (graph, input, output) = unary(
+            Op::Expand {
+                shape: dims(&target),
+            },
+            &source,
+            &target,
+        );
+        let tensors = std::collections::HashMap::from([(
+            input,
+            f32_tensor(&source, &values).expect("input"),
+        )]);
+        let results = compile(&graph).run_values(&tensors).expect("run");
+        assert_eq!(results[&output].as_slice(), expected);
+    }
+}
+
+#[test]
+fn softmax_declines_non_last_axes_instead_of_computing_the_wrong_axis() {
+    for axis in [0, -2, 2] {
+        let (graph, _, _) = unary(Op::Softmax { axis }, &[2, 2], &[2, 2]);
+        assert!(matches!(
+            CpuBackend::new()
+                .compile_typed(&graph, "ref::softmax")
+                .expect("compile"),
+            CpuCompile::Declined { .. }
+        ));
+    }
+}
+
+#[test]
+fn rank_two_kernels_decline_batched_shapes_before_execution() {
+    for dimensions in [&[2, 2, 2][..], &[1, 2, 2][..]] {
+        let (graph, _, _, _) = binary(Op::MatMul, dimensions, dimensions, dimensions);
+        assert!(matches!(
+            CpuBackend::new()
+                .compile_typed(&graph, "ref::matmul")
+                .expect("compile"),
+            CpuCompile::Declined { .. }
+        ));
+        let (graph, _, _) = unary(Op::Softmax { axis: -1 }, dimensions, dimensions);
+        assert!(matches!(
+            CpuBackend::new()
+                .compile_typed(&graph, "ref::softmax")
+                .expect("compile"),
+            CpuCompile::Declined { .. }
+        ));
+        let (graph, _, _) = unary(
+            Op::Transpose {
+                permutation: vec![0, 2, 1],
+            },
+            dimensions,
+            dimensions,
+        );
+        assert!(matches!(
+            CpuBackend::new()
+                .compile_typed(&graph, "ref::transpose")
+                .expect("compile"),
+            CpuCompile::Declined { .. }
+        ));
+    }
+    for op in [
+        ReferenceOp::MatMul,
+        ReferenceOp::Softmax,
+        ReferenceOp::Transpose,
+    ] {
+        assert_eq!(
+            CpuBackend::new().supports(op.pattern_id(), f32(), ferrite_strata::ShapeClass::Batch3),
+            ferrite_strata::SupportLevel::Refuse
         );
     }
 }

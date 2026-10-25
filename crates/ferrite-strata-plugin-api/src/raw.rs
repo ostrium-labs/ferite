@@ -1,7 +1,7 @@
 //! The C ABI, as `#[repr(C)]`.
 //!
 //! Every type here is what crosses the `dlopen` boundary, and a vendor in any
-//! language sees only this — the mirror of `include/strata_plugin.h`. Nothing in
+//! language must match these declarations. A C header is not shipped yet. Nothing in
 //! this module is a Rust trait object, a generic, or a `String`; there is no
 //! layout Rust gets to choose.
 //!

@@ -267,7 +267,8 @@ impl<'a> Partitioner<'a> {
                     else {
                         continue;
                     };
-                    if seed_level == SupportLevel::Refuse {
+                    if seed_level == SupportLevel::Refuse || !self.fits(graph, backend_index, seed)
+                    {
                         continue;
                     }
                     let grown = self.grow(graph, seed, &assigned, backend_index);
@@ -366,6 +367,13 @@ impl<'a> Partitioner<'a> {
                     if level == SupportLevel::Refuse {
                         continue;
                     }
+                    let mut proposed = members.clone();
+                    proposed.push(candidate);
+                    if !self.fits(graph, backend_index, &proposed)
+                        || !Self::is_convex(graph, &proposed)
+                    {
+                        continue;
+                    }
                     // Never lower an existing pattern's level.
                     if levels.get(&pattern).is_some_and(|&current| level < current) {
                         continue;
@@ -405,6 +413,23 @@ impl<'a> Partitioner<'a> {
         node: NodeId,
     ) -> Option<(String, SupportLevel)> {
         let info = NodeInfo::of(graph, node)?;
+        let limits = &backend.capabilities().capabilities().limits;
+        for value in graph
+            .node(node)
+            .operands()
+            .iter()
+            .chain(&graph.node(node).outputs)
+        {
+            if !limits.allows_shape(
+                &graph.value(*value).shape,
+                crate::capabilities::LimitReading::Unbounded,
+            ) || !limits.allows(
+                graph.value(*value).byte_len() as u64,
+                crate::capabilities::LimitReading::Unbounded,
+            ) {
+                return None;
+            }
+        }
         let level = backend.supports(&info.pattern_id, info.dtype, info.shape_class);
         Some((info.pattern_id.clone(), level))
     }
@@ -420,6 +445,37 @@ impl<'a> Partitioner<'a> {
             .map(|(_, level)| level)
     }
 
+    fn fits(&self, graph: &Graph, backend: usize, nodes: &[NodeId]) -> bool {
+        let limits = &self.backends[backend].capabilities().capabilities().limits;
+        let partition = self.build_partition(graph, backend, nodes);
+        self.max_partition_bytes
+            .is_none_or(|limit| partition.bytes <= limit)
+            && limits
+                .max_graph_bytes
+                .is_none_or(|limit| partition.bytes as u64 <= limit)
+            && limits
+                .max_nodes
+                .is_none_or(|limit| nodes.len() as u64 <= limit)
+    }
+
+    fn is_convex(graph: &Graph, members: &[NodeId]) -> bool {
+        let mut reachable = vec![false; graph.node_count()];
+        for (index, node) in graph.nodes().iter().enumerate() {
+            let inside = members.contains(&NodeId(index as u32));
+            for input in node.operands() {
+                if let Some(producer) = graph.value(input).producer {
+                    let producer_index = producer.0 as usize;
+                    if inside && !members.contains(&producer) && reachable[producer_index] {
+                        return false;
+                    }
+                    reachable[index] |= reachable[producer_index];
+                }
+            }
+            reachable[index] |= inside;
+        }
+        true
+    }
+
     fn build_partition(&self, graph: &Graph, backend: usize, nodes: &[NodeId]) -> Partition {
         let mut values: Vec<ValueId> = Vec::new();
         let mut seen = vec![false; graph.value_count()];
@@ -428,7 +484,7 @@ impl<'a> Partitioner<'a> {
         // that consumes it. Within a partition the ordering that matters is
         // topological, and it is preserved because `nodes` is in graph order.
         for &node in nodes {
-            for &input in &graph.node(node).inputs {
+            for input in graph.node(node).operands() {
                 if !seen[input.0 as usize] {
                     seen[input.0 as usize] = true;
                     values.push(input);
@@ -469,11 +525,13 @@ impl<'a> Partitioner<'a> {
                         .nodes()
                         .iter()
                         .enumerate()
-                        .any(|(i, node)| !in_partition[i] && node.inputs.contains(&id))
+                        .any(|(i, node)| !in_partition[i] && node.operands().contains(&id))
             })
             .collect();
 
-        let bytes = values.iter().map(|&id| graph.value(id).byte_len()).sum();
+        let bytes = values.iter().fold(0usize, |total, &id| {
+            total.saturating_add(graph.value(id).byte_len())
+        });
         let pattern_id = nodes
             .iter()
             .filter_map(|&n| NodeInfo::of(graph, n))
@@ -498,14 +556,14 @@ impl<'a> Partitioner<'a> {
     /// direction that wins is decided by support, not by this function.
     fn adjacent(&self, graph: &Graph, node: NodeId) -> Vec<NodeId> {
         let mut out = Vec::new();
-        for &input in &graph.node(node).inputs {
+        for input in graph.node(node).operands() {
             if let Some(producer) = graph.value(input).producer {
                 out.push(producer);
             }
         }
         for &output in &graph.node(node).outputs {
             for (index, candidate) in graph.nodes().iter().enumerate() {
-                if candidate.inputs.contains(&output) {
+                if candidate.operands().contains(&output) {
                     out.push(NodeId(index as u32));
                 }
             }
@@ -754,6 +812,128 @@ mod tests {
 
     fn boxed(v: Scripted) -> Box<dyn Backend> {
         Box::new(v)
+    }
+
+    #[test]
+    fn caller_and_backend_byte_caps_bound_seeds_and_growth() {
+        let graph = a_chain();
+        let mut backend = Scripted::running("bounded", ReferenceOp::all(), SupportLevel::Fused);
+        backend.support = StrataSupport::new(backend.support.capabilities().clone().with_limits(
+            DeclaredLimits {
+                max_graph_bytes: Some(96),
+                ..DeclaredLimits::default()
+            },
+        ));
+        let backends = vec![boxed(backend)];
+        for cap in [Some(128), Some(96), Some(64)] {
+            let plan = Partitioner::new(&backends)
+                .with_max_partition_bytes(cap)
+                .partition(&graph)
+                .expect("plan");
+            for partition in &plan.partitions {
+                assert!(partition.bytes <= cap.expect("cap").min(96));
+            }
+            assert_eq!(
+                plan.partitioned_nodes() + plan.host_nodes.len(),
+                graph.node_count()
+            );
+        }
+        let plan = Partitioner::new(&backends)
+            .with_max_partition_bytes(Some(63))
+            .partition(&graph)
+            .expect("plan");
+        assert!(plan.partitions.is_empty());
+        assert_eq!(plan.host_nodes.len(), graph.node_count());
+    }
+
+    #[test]
+    fn backend_limits_count_weights_and_each_allocation() {
+        let mut builder = GraphBuilder::new("weighted");
+        let input = builder.input(f32(), dims(&[2, 2]), "input").expect("input");
+        let weight = builder
+            .input(f32(), dims(&[2, 2]), "weight")
+            .expect("weight");
+        let output = builder
+            .node(
+                Op::Linear { weight, bias: None },
+                &[input],
+                &[(f32(), dims(&[2, 2]))],
+                Default::default(),
+                "linear",
+            )
+            .expect("linear")[0];
+        builder.output(output).expect("output");
+        let graph = builder.build();
+        for limits in [
+            DeclaredLimits {
+                max_graph_bytes: Some(47),
+                ..DeclaredLimits::default()
+            },
+            DeclaredLimits {
+                max_allocation_bytes: Some(15),
+                ..DeclaredLimits::default()
+            },
+            DeclaredLimits {
+                max_nodes: Some(0),
+                ..DeclaredLimits::default()
+            },
+        ] {
+            let mut backend = Scripted::running("bounded", ReferenceOp::all(), SupportLevel::Fused);
+            backend.support =
+                StrataSupport::new(backend.support.capabilities().clone().with_limits(limits));
+            let backends = vec![boxed(backend)];
+            assert!(
+                Partitioner::new(&backends)
+                    .partition(&graph)
+                    .expect("plan")
+                    .partitions
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn fusion_never_introduces_a_partition_dependency_cycle() {
+        let mut builder = GraphBuilder::new("diamond");
+        let input = builder.input(f32(), dims(&[2]), "input").expect("input");
+        let first = builder
+            .node(
+                Op::Exp,
+                &[input],
+                &[(f32(), dims(&[2]))],
+                Default::default(),
+                "exp",
+            )
+            .expect("exp")[0];
+        let middle = builder
+            .node(
+                Op::Log,
+                &[first],
+                &[(f32(), dims(&[2]))],
+                Default::default(),
+                "log",
+            )
+            .expect("log")[0];
+        let output = builder
+            .node(
+                Op::Add,
+                &[first, middle],
+                &[(f32(), dims(&[2]))],
+                Default::default(),
+                "add",
+            )
+            .expect("add")[0];
+        builder.output(output).expect("output");
+        let backends = vec![boxed(Scripted::running(
+            "partial",
+            &[ReferenceOp::Exp, ReferenceOp::Add],
+            SupportLevel::Fused,
+        ))];
+        let plan = Partitioner::new(&backends)
+            .partition(&builder.build())
+            .expect("plan");
+        assert_eq!(plan.partitions.len(), 2);
+        assert_eq!(plan.host_nodes.len(), 1);
     }
 
     #[test]
